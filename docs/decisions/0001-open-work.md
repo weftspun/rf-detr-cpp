@@ -52,21 +52,26 @@ what was open and when it closed.
 - [ ] `RFDETRSegPreviewConfig` and other non-Nano segmentation configs
       unvalidated
 
-### Keypoint detection (RFDETRKeypointPreview) — not started
+### Keypoint detection (RFDETRKeypointPreview) — research done, implementation not started
 
-- [ ] Resolve where `init_kp_ref_xy` is actually consumed in the inference
-      forward path (`transformer.py`) — affects whether
-      `keypoint_query_initializer_enc`/`enc_out_keypoint_embed` are needed
-      for inference at all, or training-loss-only
-- [ ] Read `self.keypoint_embed`'s definition (`lwdetr.py`) and
-      `_aggregate_keypoint_class_logits` in full
-- [ ] Download `rf-detr-keypoint-preview-xlarge.pth` and verify actual
+- [x] Resolve where `init_kp_ref_xy` is actually consumed in the inference
+      forward path — resolved: it's a presence-guard only, never read
+      again; `keypoint_query_initializer_enc`/`enc_out_keypoint_embed` are
+      dead code for inference, safely skippable
+- [x] Read `self.keypoint_embed`'s definition (`lwdetr.py`) and
+      `_aggregate_keypoint_class_logits` in full — both fully traced, see
+      `docs/decisions/keypoints.md`'s "Output formatting" section
+- [x] Download `rf-detr-keypoint-preview-xlarge.pth` and verify actual
       backbone/decoder dims against the checkpoint's own state-dict keys —
-      the filename says "xlarge" but `RFDETRKeypointPreviewConfig` doesn't
-      override encoder size; unresolved discrepancy, don't trust the
-      config-class assumption until checked
+      confirmed same Small/Nano-family backbone (12 layers, patch=12, no
+      registers) and 4 decoder layers as the config class implies; the
+      "xlarge" filename is misleading, not a real size mismatch. Also
+      found a dead legacy `keypoint_head.keypoint_proj.*` weight set
+      (confirmed unused via `weights.py`'s own comment) that no amount of
+      source reading would have surfaced.
 - [ ] Implement the dual projector (reuse `projector_p4` with the
-      `cross_attn_projector` weight prefix)
+      `cross_attn_projector` weight prefix — confirmed present in the
+      checkpoint)
 - [ ] Implement `ConditionalQueryInitializer` (AdaLN-modulated keypoint
       query initialization)
 - [ ] Implement the per-layer keypoint sublayer: keypoint-instance

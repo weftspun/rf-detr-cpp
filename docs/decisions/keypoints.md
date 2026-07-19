@@ -1,28 +1,48 @@
 # Keypoint head port decisions (RFDETRKeypointPreview) — research draft
 
-Status: **architecture research only, no implementation yet**. This is a
-genuinely new architecture component (a whole second "GroupPose" decoder
-stream interleaved with the detection decoder), unlike segmentation which
-reused the existing decoder/backbone verbatim with different config values.
-Read this file in full before starting `src/keypoints.cpp` — the upstream
-code (`rfdetr/models/transformer.py`'s `if self.enable_keypoint_processing:`
+Status: **architecture fully researched and checkpoint-verified, no C++
+implementation yet**. This is a genuinely new architecture component (a
+whole second "GroupPose" decoder stream interleaved with the detection
+decoder), unlike segmentation which reused the existing decoder/backbone
+verbatim with different config values. Every open question this doc
+originally flagged is now resolved (see "Resolved" markers throughout) —
+implementation can start directly from this spec. Read this file in full
+before starting `src/keypoints.cpp` — the upstream code
+(`rfdetr/models/transformer.py`'s `if self.enable_keypoint_processing:`
 branches, explicitly skipped during the detection-decoder research) is
 intricate; get the wiring right on paper first.
 
 ## Config: `RFDETRKeypointPreviewConfig` (`rfdetr/config.py`)
 
-Good news: **same backbone as other Nano-family configs** —
+**Same backbone as other Nano-family configs, checkpoint-confirmed** —
 `encoder="dinov2_windowed_small"`, `patch_size=12`, `num_windows=2`,
 `resolution=576` (so `positional_encoding_size=576/12=48`,
 `gw=gh=48`), `dec_layers=4`, `num_queries=100`. No new backbone size, no
 position-embedding bicubic interpolation needed (same reasoning as
 Nano/SegNano: `patch_size != 14` → `load_dinov2_weights=False` → checkpoint's
 position embeddings are already sized for the training resolution).
-**Not yet checkpoint-verified** — the checkpoint filename
-(`rf-detr-keypoint-preview-xlarge.pth`) is suspicious (says "xlarge" despite
-the config class not overriding encoder size); confirm actual backbone
-dims against the downloaded checkpoint's state-dict keys before trusting
-this, the way every prior milestone's assumptions were checkpoint-verified
+**Checkpoint-verified**: downloaded `rf-detr-keypoint-preview-xlarge.pth`
+(163MB) and confirmed via the `data.pkl` string-scan technique — 12
+backbone layers, 4 decoder layers, no register tokens, patch conv weight
+`(384,3,12,12)` (hidden=384/Small, patch=12), position embeddings
+`(1,2305,384)` (2305-1=2304=48×48, matches `resolution=576/patch=12`),
+`query_feat.weight`/`refpoint_embed.weight` shape `(1300,...)`
+(`num_queries*group_detr = 100*13`). **The "xlarge" in the filename is
+misleading** — this is the same Small/Nano-family backbone as every other
+config validated so far, not a larger encoder. `class_embed.weight` shape
+`(2,256)` confirms this checkpoint is trained for a **single foreground
+class** (person, +1 background = 2), consistent with
+`num_keypoints_per_class=[17]` (COCO-17 person keypoints).
+
+**Also found by checkpoint verification, not present in any source
+reading**: a `keypoint_head.keypoint_proj.{0,1,2}.*` weight set exists in
+this checkpoint but is **dead** — `rfdetr/models/weights.py`'s own comment
+confirms it: *"The preview keypoint checkpoint still stores the old
+standalone MLP projection head, but the current GroupPose inference path
+no longer consumes it."* Ignore these keys entirely; `keypoint_embed.*`
+(not `keypoint_head.*`) is the real, currently-used weight set. This is
+exactly the kind of thing source-reading alone misses and checkpoint
+verification catches — consistent with every prior milestone's experience
 (e.g. the backbone-windowing off-by-one, the decoder's non-zero
 `refpoint_embed` — assumptions from reading source alone have been wrong
 before in this project).
@@ -95,17 +115,23 @@ Two independent instances (`grouppose_keypoint_dim_downscale=1` → both
   `TransformerDecoder.forward` asserts
   `enable_keypoint_processing requires lite_refpoint_refine`).
 
-**Important**: `init_kp_ref_xy` is asserted required by
-`TransformerDecoder.forward` but the actual keypoint cross-attention code
-(`TransformerDecoderLayer.forward_post`'s keypoint branch, read below) uses
-`bbox_ref_for_kp` = the **parent detection query's own box reference**
-(`reference_points`, expanded per-keypoint), *not* `init_kp_ref_xy`
-directly, for the deformable sampling. Re-check where `init_kp_ref_xy`
-actually gets consumed (likely only for the *loss*/matching machinery in
-training, or for `_format_keypoint_output`'s xy — not yet traced to its
-consumer in the inference forward path; **resolve this before
-implementing**, since it changes whether `keypoint_query_initializer_enc`
-is needed for inference at all).
+**Resolved: `init_kp_ref_xy` is dead code for inference.** Traced fully —
+`TransformerDecoder.forward` takes `init_kp_ref_xy` as a parameter and
+raises `ValueError` if it's `None` (a presence guard only), but the
+parameter is **never read again anywhere else in that function body**. The
+per-layer keypoint cross-attention (`TransformerDecoderLayer.forward_post`)
+uses `bbox_ref_for_kp` = the **parent detection query's own
+`reference_points`** (expanded per-keypoint), not `init_kp_ref_xy`. And the
+final keypoint xy decode (`LWDETR.forward`, see "Output formatting" below)
+also uses the parent query's `ref_unsigmoid` (the same fixed reference
+every other head decodes against), not `init_kp_ref_xy` either.
+**Consequence: `keypoint_query_initializer_enc`, `enc_out_keypoint_embed`,
+and the whole `init_kp_ref_xy`/`enc_kp_predictions` computation chain can
+be skipped entirely in this port** — they exist upstream only to populate
+`out["enc_outputs"]["pred_keypoints"]` (training-loss-only, like all
+`enc_outputs`) and to satisfy that one guard, neither of which this
+inference-only port needs to replicate. Only `keypoint_query_initializer`
+(the **decoder-level** one, conditioned on `tgt`) is actually needed.
 
 ## Per-layer keypoint processing (`TransformerDecoderLayer.forward_post`, keypoint branch)
 
@@ -173,38 +199,64 @@ segmentation, needs all layers or just the last one before assuming
 
 ## Output formatting (`LWDETR`, `rfdetr/models/lwdetr.py`)
 
-- `keypoint_hs` (all-layers stack from `TransformerDecoder`) →
-  `self.keypoint_embed(keypoint_hs)` (not yet read — locate this module,
-  likely another small MLP mapping `kp_dim → KEYPOINT_PRED_DIM=8`) →
-  `outputs_keypoints_delta` → decode via the box-reparam-style formula
-  against the **parent query's** `ref_wh`/`ref_xy` (not a separate keypoint
-  reference) → `outputs_keypoints_compact` (`x,y` reparam-decoded,
-  remaining 6 channels — `findable`, `visible`, 3 Cholesky params, 1
-  class-logit — passed through unchanged from the delta, per the module
-  docstring's `KEYPOINT_PRED_DIM=8` slot layout in
-  `rfdetr/models/heads/keypoints.py`).
-- `_format_keypoint_output`: converts "compact" (`total_actual_keypoints`)
-  to "class-padded" (`num_classes * max_keypoints_per_class`) layout —
-  **for `num_keypoints_per_class=[17]` (single class) these are equal**
-  (`17 == 1*17`), so this is a **no-op pass-through** for this checkpoint.
-  Don't implement the general multi-class padding logic yet; not needed.
-- `_aggregate_keypoint_class_logits`: sums each keypoint's slot-7
-  "class-logit contribution" into the main detection `class_embed` output
-  (`outputs_class = outputs_class + self._aggregate_keypoint_class_logits(...)`)
-  — **not yet read in detail**, needed before implementing final logits.
+`self.keypoint_embed` (`LWDETR.__init__`): `MLP(hidden_dim, hidden_dim, 8,
+3)` — same `MLP` class as `bbox_embed`, 3 `nn.Linear` layers
+(`layers.0`: 256→256, `layers.1`: 256→256, `layers.2`: 256→8, ReLU between
+the first two, none after the last — identical structure/weight-prefix
+convention to `bbox_embed.layers.{0,1,2}`, reuse `mlp()` from `ops.h`
+verbatim). Last layer zero-initialized at construction (irrelevant —
+loaded from checkpoint).
+
+Per-layer forward (only the **last** decoder layer's `keypoint_tgt` is
+actually needed for the final output — `outputs_keypoints[-1]`, exactly
+like detection's `pred_boxes`/`pred_logits` only needing `hs[-1]`; unlike
+segmentation, which genuinely needs every layer):
+```
+outputs_keypoints_delta = keypoint_embed(keypoint_tgt)      # (..., num_kp, 8)
+ref_wh = ref_unsigmoid[..., 2:].unsqueeze(-2)                # parent query's OWN box, same one everywhere else
+ref_xy = ref_unsigmoid[..., :2].unsqueeze(-2)
+keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy   # same reparam formula as bbox/mask heads
+keypoints_other = outputs_keypoints_delta[..., 2:]           # findable, visible, 3 Cholesky params, class-logit -- passthrough
+outputs_keypoints_compact = cat([keypoints_xy, keypoints_other], dim=-1)   # (..., num_kp, 8)
+```
+`_format_keypoint_output`: converts "compact" (`total_actual_keypoints`) to
+"class-padded" (`num_classes * max_keypoints_per_class`) layout — **for
+`num_keypoints_per_class=[17]` (single class) these are equal** (`17 ==
+1*17`), so this is a **no-op pass-through** for this checkpoint. Don't
+implement the general multi-class padding logic; not needed.
+
+`_aggregate_keypoint_class_logits` (fully traced): takes slot-7
+("class-logit contribution") from every keypoint,
+`class_contrib.view(..., num_keypoint_classes, max_num_keypoints) *
+self._kp_active_mask` (mask is all-`True`/trivial for one class with all
+17 keypoints active — safe to skip the mask, just sum), `.sum(dim=-1)` →
+one scalar boost per keypoint-class → **zero-padded** up to the detection
+head's full `num_classes+1` (91) output width. For this checkpoint
+(`num_keypoints_per_class=[17]`, one class): `pred_logits[..., 0] +=
+sum_{k=0..16}(keypoint_predictions[..., k, 7])`, **all other 90 classes
+(including background) unchanged**. Applied as
+`outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)`
+— i.e. this is an *additive correction to `pred_logits`*, not a separate
+output; `src/decoder.cpp`'s existing `class_embed` linear output needs this
+term added in before being returned, once the keypoint head is wired in.
+
+Final: `out["pred_keypoints"] = outputs_keypoints[-1]` (last layer only).
 - Final `out["pred_keypoints"] = outputs_keypoints[-1]` — last layer only
   (mirrors detection's `[-1]`, unlike segmentation's "all layers").
 
 ## Implementation plan and open tasks
 
-Tracked as an actionable checklist in
-[`0001-open-work.md`](0001-open-work.md)'s "Keypoint detection" section,
-not duplicated here — this file stays the architecture reference. Summary:
-resolve `init_kp_ref_xy`'s real consumer and read `keypoint_embed`/
-`_aggregate_keypoint_class_logits` in full, verify the checkpoint's actual
-backbone/decoder dims (the "xlarge" filename is an unresolved discrepancy
-against the config class), then implement the dual projector,
-`ConditionalQueryInitializer`, the per-layer keypoint sublayer, final
-decode, conversion script, reference dump, and C++ test — same methodology
-as every prior milestone. **No line of `src/keypoints.cpp` has been written
-yet**; everything above is read-only source analysis.
+All research questions this doc originally raised are resolved (init_kp_ref_xy
+is dead code, keypoint_embed's shape and consumers are fully traced, the
+checkpoint's dims and the dead keypoint_head.keypoint_proj.* keys are
+confirmed). Remaining work is implementation, not research — tracked as an
+actionable checklist in [`0001-open-work.md`](0001-open-work.md)'s
+"Keypoint detection" section, not duplicated here — this file stays the
+architecture reference. Summary: implement the dual projector (reuse
+`projector_p4` with the `cross_attn_projector` prefix — verified present
+in the checkpoint), `ConditionalQueryInitializer`, the per-layer keypoint
+sublayer (self-attn + deformable cross-attn + FFN, all shapes confirmed
+above), the final keypoint decode + class-logit aggregation, then the
+conversion script, reference dump, and C++ test — same methodology as
+every prior milestone. **No line of `src/keypoints.cpp` has been written
+yet**; everything above is architecture research, now checkpoint-verified.
