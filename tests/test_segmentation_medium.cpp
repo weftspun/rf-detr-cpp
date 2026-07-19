@@ -74,7 +74,7 @@ int main(int argc, char ** argv) {
     dp.num_queries = 200; dp.num_classes = 91; dp.gw = 36; dp.gh = 36;
 
     SegmentationParams sp;
-    sp.hidden_dim = 256; sp.num_blocks = 4; sp.downsample_ratio = 4; sp.image_w = 432; sp.image_h = 432;
+    sp.hidden_dim = 256; sp.num_blocks = 5; sp.downsample_ratio = 4; sp.image_w = 432; sp.image_h = 432;
 
     const int64_t res = 432;
 

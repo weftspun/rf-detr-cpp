@@ -103,7 +103,17 @@ what was open and when it closed.
       Same encoder family as SegNano, `num_windows=2` (vs SegNano's 1),
       resolution 384 (grid 32) — pure config-value extension, no code
       changes.
-- [ ] Other segmentation variants (Medium/Large/XL/2XL) unvalidated
+- [x] RFDETRSegMedium validated end-to-end (`test_segmentation_medium`:
+      boxes 6.2e-3, logits 4.1e-3, masks 8.4e-2 against the 0.15 gate) —
+      checkpoint-verified against `rf-detr-seg-m-ft.pth` (MD5 confirmed).
+      Caught a real bug while wiring this one up: `SegmentationParams::
+      num_blocks` must equal `dec_layers` (one `DepthwiseConvBlock` per
+      decoder layer, per `segmentation.h`'s own doc comment) — copying
+      SegSmall's test file verbatim with `num_blocks=4` left over (SegMedium
+      is `dec_layers=5`) produced a real, large mask divergence
+      (max-abs-diff 20, nothing like the small "amplified float drift"
+      residual every other variant shows) until fixed.
+- [ ] Other segmentation variants (Large/XL/2XL) unvalidated
 - [ ] `RFDETRSegPreviewConfig` and other non-Nano segmentation configs
       unvalidated
 
