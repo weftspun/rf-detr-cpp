@@ -91,14 +91,42 @@ Every individual piece is correct. What differs in the full pipeline is that
 the mask head is a **256-channel dot product** turned directly into a
 logit (no softmax/normalization to compress the scale) — a ~1e-3-level
 per-channel input error (step 5, already an accepted scale elsewhere) can
-combine across 256 channels into an output error up to `~sqrt(256)≈16×`
-larger in the worst case (random-sign accumulation), landing squarely at the
-observed max-abs-diff (~0.1) while the *mean* stays tiny (2e-3) — i.e. a few
-outlier query/pixel combinations see amplified drift, not a systematic
-error. This is expected floating-point behavior for a from-scratch
-reimplementation feeding a large dot product, not a logic bug — hence the
-gate is relaxed specifically for `pred_masks`, with this reasoning recorded
-inline in `tests/test_segmentation.cpp` and here.
+combine across 256 channels into an output error, landing at the observed
+max-abs-diff (~0.1) while the *mean* stays tiny (2e-3) — i.e. a few outlier
+query/pixel combinations see amplified drift, not a systematic error. This
+is plausible floating-point behavior for a from-scratch reimplementation
+feeding a large dot product, not a logic bug — hence the gate is relaxed
+specifically for `pred_masks`, with this reasoning recorded inline in
+`tests/test_segmentation.cpp` and here.
+
+**Correction after independent review**: an initial draft of this doc
+claimed the `~sqrt(256)≈16×` random-sign-accumulation model *predicts* the
+observed 0.109 from the ~1e-3 input error scale. A second-opinion review
+correctly flagged that the back-of-envelope bound (`1e-3 × 16 ≈ 1.6e-2`) is
+actually **~7× lower** than the observed 0.109 — the number was picked to
+match the outcome after the fact, not independently predicted. Softened to
+"plausible, no bug found" rather than "the math predicts this exactly."
+Two follow-up checks the review requested, done cheaply after the fact:
+- **Per-block growth is not smooth/monotonic**, which argues against pure
+  compounding-across-4-blocks as the mechanism: feeding real spatial
+  features + this port's own `hidden_states[0..3]` gives `mask[0..2]`
+  max-abs-diff of 0.0038 / 0.0048 / 0.0067 (mild, roughly linear growth)
+  but `mask[3]` jumps to 0.109 — a ~16× discontinuity in one step, despite
+  `hidden_states[2]` and `hidden_states[3]`'s own errors being nearly
+  identical (~2.3e-3 vs ~2.5e-3, from the standalone `hidden_states` diff
+  check). Confirmed by direct ablation below that this is real, not noise.
+- **Where the worst pixel is**: the observed argmax (element 158137 of a
+  `(78,78,100)` WHC-flattened mask) decodes to `query=25, h=77, w=31` —
+  `h=77` is the **last row** of a 0-77-indexed 78-pixel image, i.e. a
+  boundary pixel. Consistent with the review's suggested alternative
+  explanation (bilinear-interpolation/conv-padding edge sensitivity) being
+  at least a contributing factor, alongside or instead of pure random-sign
+  channel accumulation. **Not fully characterized** — the honest state is
+  "confirmed the discrepancy traces 100% to `hidden_states[3]`'s existing,
+  already-accepted drift" (see the ablation below), not "we know exactly
+  why the amplification is boundary/query-25-specific." Worth a follow-up
+  if this pattern recurs for other heads (the review flagged this
+  dot-product-amplification pattern as *likely to recur*, not a one-off).
 
 **Confirmed by direct ablation** (requested as a second-opinion follow-up,
 not just the indirect evidence above): ran `segmentation_head()` fed the
@@ -123,3 +151,10 @@ identically every iteration, matching upstream's single shared modules).
 - Other segmentation variants (Small/Medium/Large/XL/2XL) — only Nano is
   validated.
 - `RFDETRSegPreviewConfig` and other non-Nano-specific segmentation configs.
+- The *exact* mechanism behind the mask head's error amplification (random
+  channel-sign accumulation vs. magnitude/boundary-pixel sensitivity vs.
+  both) is not nailed down — only that it isn't a wiring/aliasing bug. This
+  dot-product-without-normalization pattern is expected to recur for any
+  future un-normalized head; budget time to re-derive per-head gates rather
+  than assuming 5e-2 is always achievable, and don't assume a relaxed gate
+  is automatically safe without the same kind of ablation done here.
