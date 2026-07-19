@@ -62,16 +62,32 @@ what was open and when it closed.
       checkpoint-verified against `rf-detr-large-2026.pth` (MD5 confirmed).
       Same pattern as Small/Medium: resolution 704 (grid 44), `dec_layers=4`,
       no code changes.
-- [ ] There is no detection XL/2XL variant upstream — only Nano, Small,
+- [x] There is no detection XL/2XL variant upstream — only Nano, Small,
       Medium, Base, Large, and LargeDeprecated exist for detection (XL/2XL
-      only exist for segmentation). **Every remaining detection size is
-      now validated except LargeDeprecated**, which needs real new code:
-      patch_size==14 (like Base) but **768-wide backbone AND
-      `projector_scale=['P3','P5']` → `num_feature_levels=2`** — every
-      variant validated so far (including Base) is single-feature-level;
-      deformable cross-attention's `n_levels` dimension is currently
-      unexercised beyond 1, so this needs real `src/deform_attn.cpp` work,
-      not just a config-table addition.
+      only exist for segmentation). **Every actively-used detection size is
+      now validated.** `RFDETRLargeDeprecated` (multi-feature-level
+      `projector_scale=['P3','P5']`, 768-wide backbone) is a real config
+      class upstream still ships, but it's explicitly superseded by the
+      current `RFDETRLarge` (already validated) and no active code in this
+      port or upstream depends on it — **deprioritized per explicit
+      instruction, not pursuing further**. The multi-level building blocks
+      built while investigating it are kept (they're general-purpose, not
+      LargeDeprecated-specific) but validated only in isolation against
+      synthetic weights, not against LargeDeprecated's real checkpoint:
+      - `ms_deform_attn_multilevel` (`src/deform_attn.{h,cpp}`) — exact
+        match in isolation (`test_deform_attn_multilevel.cpp`).
+      - `projector_multiscale` (`src/projector.{h,cpp}`) — exact match in
+        isolation (`test_projector_multiscale.cpp`).
+      - `DecoderParams::levels` multi-level wiring (`src/decoder.{h,cpp}`)
+        — zero regression on all 7 existing decoder tests, not yet
+        end-to-end validated against a real multi-level checkpoint.
+      - Sine-embedding dim parametrization (`hd/2` instead of hardcoded
+        128) — a real latent bug fix, independently valuable, zero
+        regression confirmed.
+      - **A real, unresolved ggml graph-allocator bug was found and
+        documented** while chasing this (see the SegXLarge entry below) —
+        that finding stands on its own regardless of LargeDeprecated's
+        priority, since it affects any sufficiently large decoder graph.
 - [x] Multi-image batching: `dinov2_backbone`'s windowed-attention trick
       already spends ggml's only spare batch axis on per-window batching
       (token-major tensors are `(C,T,nw2)`, not `(C,T,1,N_img)`), so a true
