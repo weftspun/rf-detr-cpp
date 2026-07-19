@@ -113,7 +113,19 @@ what was open and when it closed.
       is `dec_layers=5`) produced a real, large mask divergence
       (max-abs-diff 20, nothing like the small "amplified float drift"
       residual every other variant shows) until fixed.
-- [ ] Other segmentation variants (Large/XL/2XL) unvalidated
+- [x] RFDETRSegLarge validated end-to-end (`test_segmentation_large`:
+      boxes 2.4e-3, logits 7.1e-3, masks 7.8e-2 against the 0.15 gate) —
+      checkpoint-verified against `rf-detr-seg-l-ft.pth` (MD5 confirmed).
+      Caught a real config-vs-checkpoint drift: `RFDETRSegLargeConfig`'s
+      own `num_queries` default is 200, but the actual published
+      checkpoint's `refpoint_embed.weight`/`query_feat.weight` are shaped
+      for 300 queries (`3900 = 300*13 group_detr` rows) — the default
+      produces a `load_state_dict` size-mismatch error; fixed by passing
+      `num_queries=300` explicitly (both in `gen_reference_segmentation.py`
+      and the C++ `DecoderParams`), not trusting the config class's own
+      default. Same encoder/window pattern as SegMedium, resolution 504
+      (grid 42), `dec_layers=5`.
+- [ ] Other segmentation variants (XL/2XL) unvalidated
 - [ ] `RFDETRSegPreviewConfig` and other non-Nano segmentation configs
       unvalidated
 

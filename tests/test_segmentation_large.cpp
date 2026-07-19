@@ -75,7 +75,10 @@ int main(int argc, char ** argv) {
 
     DecoderParams dp;
     dp.hidden_dim = 256; dp.dec_layers = 5; dp.sa_nheads = 8; dp.ca_nheads = 16; dp.dec_n_points = 2;
-    dp.num_queries = 200; dp.num_classes = 91; dp.gw = 42; dp.gh = 42;
+    // NOT the RFDETRSegLargeConfig default (200) -- the real published
+    // checkpoint's refpoint_embed.weight/query_feat.weight are shaped for
+    // 300 queries (checkpoint-verified, see gen_reference_segmentation.py).
+    dp.num_queries = 300; dp.num_classes = 91; dp.gw = 42; dp.gh = 42;
 
     SegmentationParams sp;
     sp.hidden_dim = 256; sp.num_blocks = 5; sp.downsample_ratio = 4; sp.image_w = 504; sp.image_h = 504;

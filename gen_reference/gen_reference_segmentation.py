@@ -26,7 +26,14 @@ CONFIGS = {
     "seg-nano": (RFDETRSegNanoConfig, 312, 100),
     "seg-small": (RFDETRSegSmallConfig, 384, 100),
     "seg-medium": (RFDETRSegMediumConfig, 432, 200),
-    "seg-large": (RFDETRSegLargeConfig, 504, 200),
+    # RFDETRSegLargeConfig's own num_queries default (200) does NOT match
+    # the actual published rf-detr-seg-l-ft.pth checkpoint, which has
+    # refpoint_embed.weight/query_feat.weight shaped for 300 queries
+    # (3900 = 300*13 group_detr rows) -- checkpoint-verified via a direct
+    # torch.load state-dict shape check after the config-default 200
+    # produced a load_state_dict size-mismatch error. Passed as an
+    # explicit override below, not the config class's own default.
+    "seg-large": (RFDETRSegLargeConfig, 504, 300),
     "seg-xlarge": (RFDETRSegXLargeConfig, 624, 300),
     "seg-2xlarge": (RFDETRSeg2XLargeConfig, 768, 300),
 }
@@ -45,7 +52,7 @@ def main():
     variant = sys.argv[3] if len(sys.argv) > 3 else "seg-nano"
     config_cls, res, num_queries = CONFIGS[variant]
 
-    cfg = config_cls(pretrain_weights=None, device="cpu")
+    cfg = config_cls(pretrain_weights=None, device="cpu", num_queries=num_queries)
     model = build_model_from_config(cfg)
     model.eval()
 
