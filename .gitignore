@@ -1,0 +1,11 @@
+*.gguf
+*.safetensors
+*.pth
+models/
+__pycache__/
+build/
+build-vulkan/
+reference_*.bin
+reference_*.npz
+gen_reference/*.bin
+/*.log
