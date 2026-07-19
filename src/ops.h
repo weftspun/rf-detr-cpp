@@ -35,6 +35,14 @@ struct Model {
 ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre,
                      int stride = 1, int pad = 1);
 
+// Transposed (stride>1 upsampling) conv2d + optional bias, padding=0 only
+// (ggml_conv_transpose_2d_p0) -- used by the multi-scale projector's P3
+// (upsample) per-tap stages_sampling module. Weight "<pre>.weight" has
+// PyTorch ConvTranspose2d's (in_ch,out_ch,kh,kw) shape, which GGUF's
+// shape-reversal already turns into the ne=(kw,kh,out_ch,in_ch) this op
+// expects directly -- no permute needed at load time.
+ggml_tensor * conv_transpose2d(Model & m, ggml_tensor * x, const std::string & pre, int stride);
+
 // LayerNorm over ne[0] + affine, for token-major (C, T[, N]) activations
 ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre,
                                 float eps = 1e-6f);

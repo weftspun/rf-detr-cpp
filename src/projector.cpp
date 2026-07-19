@@ -2,12 +2,19 @@
 
 // ConvX: bias-free conv -> spatial LayerNorm (ConvNeXt-style, called ".bn"
 // in the checkpoint even though it's a LayerNorm since layer_norm=True is
-// threaded through every ConvX in this model) -> SiLU.
-static ggml_tensor * conv_x(Model & m, ggml_tensor * x, const std::string & pre, int kernel, int stride) {
+// threaded through every ConvX in this model) -> activation. C2f/Bottleneck
+// construct their ConvX instances with act="silu" (the default), but
+// MultiScaleProjector's raw per-tap P5-downsample ConvX
+// (ConvX(in_dim,in_dim,3,2,layer_norm=layer_norm) in projector.py, no act=
+// override) gets ConvX's OWN default, act="relu" -- checkpoint-verified via
+// a synthetic-weight isolation test (tests/test_projector_multiscale.cpp)
+// after silu produced a real numeric mismatch there.
+static ggml_tensor * conv_x(Model & m, ggml_tensor * x, const std::string & pre, int kernel, int stride,
+                            bool relu = false) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * y = conv2d(m, x, pre + ".conv", stride, kernel / 2);
     y = spatial_layer_norm_affine(m, y, pre + ".bn");
-    return ggml_silu(ctx, y);
+    return relu ? ggml_relu(ctx, y) : ggml_silu(ctx, y);
 }
 
 // Bottleneck(c,c,shortcut=False): two 3x3 ConvX, no residual add (C2f always
@@ -47,4 +54,37 @@ ggml_tensor * projector_p4(Model & m, const std::vector<ggml_tensor *> & taps, i
 
     ggml_tensor * y = c2f(m, fused, prefix + ".stages.0.0", out_channels, 3);
     return spatial_layer_norm_affine(m, y, prefix + ".stages.0.1");
+}
+
+std::vector<ggml_tensor *> projector_multiscale(Model & m, const std::vector<ggml_tensor *> & taps,
+                                                const std::vector<float> & scale_factors,
+                                                int out_channels, const std::string & prefix) {
+    ggml_context * ctx = m.ctx_g;
+    std::vector<ggml_tensor *> outputs;
+    for (size_t lvl = 0; lvl < scale_factors.size(); lvl++) {
+        const float sf = scale_factors[lvl];
+        const std::string samp_pre = prefix + ".stages_sampling." + std::to_string(lvl) + ".";
+
+        ggml_tensor * fused = nullptr;
+        for (size_t t = 0; t < taps.size(); t++) {
+            // upstream wraps each per-tap sampling module in nn.Sequential(*layers)
+            // even when there's only one layer, so the flattened state-dict key
+            // always has a ".0" Sequential index before the actual module
+            // (checkpoint-verified against a synthetic MultiScaleProjector's own
+            // named_parameters(), not assumed from source reading alone).
+            const std::string tap_pre = samp_pre + std::to_string(t) + ".0";
+            ggml_tensor * y;
+            if (sf > 1.0f) {
+                y = conv_transpose2d(m, taps[t], tap_pre, (int) sf); // no norm/act
+            } else {
+                y = conv_x(m, taps[t], tap_pre, 3, (int) (1.0f / sf), /*relu=*/true);
+            }
+            fused = fused ? ggml_concat(ctx, fused, y, 2) : y;
+        }
+
+        const std::string stage_pre = prefix + ".stages." + std::to_string(lvl) + ".";
+        ggml_tensor * y = c2f(m, fused, stage_pre + "0", out_channels, 3);
+        outputs.push_back(spatial_layer_norm_affine(m, y, stage_pre + "1"));
+    }
+    return outputs;
 }

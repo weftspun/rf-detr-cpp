@@ -105,6 +105,17 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre, int st
     return r;
 }
 
+ggml_tensor * conv_transpose2d(Model & m, ggml_tensor * x, const std::string & pre, int stride) {
+    ggml_context * ctx = m.ctx_g;
+    ggml_tensor * w = m.get(pre + ".weight");
+    ggml_tensor * r = ggml_conv_transpose_2d_p0(ctx, w, x, stride);
+    if (m.has(pre + ".bias")) {
+        ggml_tensor * b = ggml_reshape_4d(ctx, m.get(pre + ".bias"), 1, 1, w->ne[2], 1);
+        r = ggml_add(ctx, r, b);
+    }
+    return r;
+}
+
 ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre, float eps) {
     ggml_context * ctx = m.ctx_g;
     x = ggml_norm(ctx, x, eps);
