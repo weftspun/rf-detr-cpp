@@ -333,7 +333,13 @@ variants for each (see their sections above), then phase-2 training.
 
 ### Documentation / process
 
-- [ ] Weights not yet published to a GitHub Release on
-      `github.com/weftspun/rf-detr-cpp` (per the original instruction to
-      mirror see-through-cpp's release layout, zstd-split for >2GB files)
-      — `models/*.gguf`/`*.pth` currently exist only locally, gitignored
+- [x] Weights published to a GitHub Release:
+      [v0.1.0-dev](https://github.com/weftspun/rf-detr-cpp/releases/tag/v0.1.0-dev)
+      on `github.com/weftspun/rf-detr-cpp`. All 40 GGUF files (every
+      checkpoint-validated variant) are under GitHub's 2GB asset limit, so
+      none needed zstd splitting (unlike see-through-cpp's UNet weights).
+      RFDETRSegXLarge/Seg2XLarge deliberately excluded: SegXLarge
+      validation still fails (see above) and XL/2XL upstream checkpoints
+      are PML 1.0-licensed, not Apache-2.0. Upstream `.pth` checkpoints
+      are NOT re-hosted (Roboflow's own release, not this port's to
+      redistribute) — README points at the original download URLs.

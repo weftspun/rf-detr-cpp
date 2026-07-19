@@ -69,7 +69,19 @@ Checkpoints download from `https://storage.googleapis.com/rfdetr/*` (see
 
 ## Weights
 
-Converted GGUF weights will be published on this repo's GitHub Releases
-(zstd-split parts for files >2GB), mirroring see-through-cpp's release
-layout. Upstream PyTorch checkpoints are plain `.pth` state dicts hosted at
-`https://storage.googleapis.com/rfdetr/*.pth` (not HuggingFace).
+Converted GGUF weights (F32) for every checkpoint-validated variant are
+published on this repo's GitHub Releases:
+[v0.1.0-dev](https://github.com/weftspun/rf-detr-cpp/releases/tag/v0.1.0-dev).
+Each variant is split into separate `<variant>-{backbone,projector,decoder}
+[,-segmentation][,-keypoints][,-cross-projector]` files — load all parts for
+a variant into one `Model` via repeated `rfdetr_load()` calls. All files are
+under GitHub's 2GB asset limit, so none needed zstd splitting (mirroring
+see-through-cpp's release layout otherwise). RFDETRSegXLarge/Seg2XLarge are
+NOT published: SegXLarge validation still fails with a large, unresolved
+divergence (see `docs/decisions/0001-open-work.md`), and XL/2XL upstream
+checkpoints are PML 1.0-licensed rather than Apache-2.0.
+
+Upstream PyTorch checkpoints are plain `.pth` state dicts hosted at
+`https://storage.googleapis.com/rfdetr/*.pth` (not HuggingFace) — not
+re-hosted here; convert them yourself with `scripts/convert_*.py` if you
+need to reproduce or extend the GGUF conversion.
