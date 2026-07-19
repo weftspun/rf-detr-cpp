@@ -27,6 +27,14 @@ VARIANTS = {
         num_windows=2, ln_eps=1e-6,
         out_feature_indexes_raw=[3, 6, 9, 12],
     ),
+    # RFDETRSmallConfig: same Nano-family backbone/window config, just a
+    # larger resolution (512 -> grid 32, still patch_size==16 so
+    # runtime_grid==native_grid, no bicubic interpolation needed).
+    "small": dict(
+        hidden=384, n_layer=12, n_head=6, patch_size=16, n_register=0,
+        num_windows=2, ln_eps=1e-6,
+        out_feature_indexes_raw=[3, 6, 9, 12],
+    ),
     # RFDETRSegNanoConfig: same Small/no-registers encoder, but num_windows=1
     # (windowed vs global attention become numerically identical -- a useful
     # sanity check that both code paths in backbone.cpp agree), patch_size=12,

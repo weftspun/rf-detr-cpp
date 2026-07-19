@@ -20,10 +20,14 @@ import sys
 
 import numpy as np
 import torch
-from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig
+from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, RFDETRSmallConfig
 from rfdetr.models.lwdetr import build_model_from_config
 
-CONFIGS = {"nano": (RFDETRNanoConfig, 384, 300), "base": (RFDETRBaseConfig, 560, 300)}
+CONFIGS = {
+    "nano": (RFDETRNanoConfig, 384, 300),
+    "base": (RFDETRBaseConfig, 560, 300),
+    "small": (RFDETRSmallConfig, 512, 300),
+}
 
 
 def write_arr(f, arr: np.ndarray):

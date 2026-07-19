@@ -40,7 +40,15 @@ BASE = dict(
     out_feature_indexes_raw=[2, 5, 8, 11],
 )
 
-VARIANTS = {"nano": NANO, "base": BASE}
+# RFDETRSmallConfig: same Nano-family backbone, resolution=512 (grid 32).
+SMALL = dict(
+    hidden_size=384, num_hidden_layers=12, num_attention_heads=6,
+    patch_size=16, num_register_tokens=0, num_windows=2,
+    image_size=512, resolution=512,
+    out_feature_indexes_raw=[3, 6, 9, 12],
+)
+
+VARIANTS = {"nano": NANO, "base": BASE, "small": SMALL}
 
 
 def write_arr(f, arr: np.ndarray):
