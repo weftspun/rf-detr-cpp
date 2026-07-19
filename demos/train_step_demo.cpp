@@ -17,9 +17,16 @@
 //   1. Forward-only pass (current class_embed/bbox_embed weights) ->
 //      pred_boxes/pred_logits, read back to host for Hungarian matching
 //      against that step's image's real COCO annotations.
-//   2. Forward + detection_loss + backward + one hand-rolled AdamW update
-//      per trainable tensor, computed once, updated weights read back to
-//      host and carried into the next step.
+//   2. Forward + detection_loss + backward + the REAL ggml_opt_step_adamw
+//      graph op (not hand-rolled host-side math) for each trainable
+//      tensor, all in the SAME single compute call, updated weights and
+//      AdamW moment state read back to host and carried into the next
+//      step. Safe to build the optimizer step into the same graph as
+//      forward+backward here specifically because this demo already
+//      rebuilds a fresh graph/context/allocator every step and computes
+//      it exactly once -- the "repeated graph execution corrupts
+//      results" gap (0003-training.md) only bites when the SAME
+//      allocated graph is computed more than once.
 //
 // Usage: build/train_step_demo.exe [n_steps=8] [lr=0.01] [dataset_dir=gen_reference/coco_sample_384]
 #include "backbone.h"
@@ -36,6 +43,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
 
 #if defined(_MSC_VER) || defined(_WIN32)
@@ -102,6 +110,9 @@ struct GraphHandles {
     ggml_tensor * pred_logits = nullptr;
     ggml_tensor * loss = nullptr;
     ggml_tensor * head_tensors[8] = {}; // class_w,class_b,bbox_w0,bbox_b0,bbox_w1,bbox_b1,bbox_w2,bbox_b2
+    ggml_tensor * m_tensors[8] = {};    // ggml_opt_step_adamw's AdamW first-moment state, one per head tensor
+    ggml_tensor * v_tensors[8] = {};    // ggml_opt_step_adamw's AdamW second-moment state, one per head tensor
+    ggml_tensor * adamw_params = nullptr; // (7,) F32: alpha,beta1,beta2,eps,wd,beta1h,beta2h
 };
 
 static void free_graph(GraphHandles & g) {
@@ -112,7 +123,10 @@ static void free_graph(GraphHandles & g) {
 }
 
 static GraphHandles build_graph(Model & m, const TrainableHead & head, const std::vector<float> & pixels,
-                                bool trainable, const DetectionTarget * tgt, const MatchResult * match) {
+                                bool trainable, const DetectionTarget * tgt, const MatchResult * match,
+                                std::vector<std::vector<float>> * m_state = nullptr,
+                                std::vector<std::vector<float>> * v_state = nullptr,
+                                float lr = 0.0f, int step_t = 0) {
     GraphHandles g;
     size_t meta = ggml_tensor_overhead() * 200000 + ggml_graph_overhead_custom(200000, trainable);
     ggml_init_params ip = { meta, nullptr, true };
@@ -181,6 +195,40 @@ static GraphHandles build_graph(Model & m, const TrainableHead & head, const std
     if (trainable) {
         ggml_build_forward_expand(g.gf, g.pred_logits);
         ggml_build_backward_expand(g.ctx, g.gf, nullptr);
+
+        // Real ggml_opt_step_adamw graph op (not hand-rolled host-side
+        // math): safe to build into the SAME single-compute graph as
+        // forward+backward, since this demo already rebuilds a completely
+        // fresh graph/context/allocator for every step and computes it
+        // exactly once -- the "repeated graph execution corrupts results"
+        // gap this was originally deferred to sidestep
+        // (docs/decisions/0003-training.md) only bites when the SAME
+        // allocated graph is computed more than once, which never happens
+        // here. ggml_opt_step_adamw's result is a VIEW of the weight
+        // tensor itself (writes the update directly into its buffer,
+        // confirmed via third_party/ggml/src/ggml.c's constructor:
+        // `ggml_view_tensor(ctx, a)`), and its m/v state tensors are also
+        // updated in place by the CPU kernel -- both are read back after
+        // compute exactly like head_tensors already are.
+        g.adamw_params = ggml_new_tensor_1d(g.ctx, GGML_TYPE_F32, 7);
+        ggml_set_name(g.adamw_params, "adamw_params");
+        ggml_set_input(g.adamw_params);
+        ggml_set_output(g.adamw_params);
+        for (int i = 0; i < 8; i++) {
+            ggml_tensor * w = g.head_tensors[i];
+            ggml_tensor * grad = ggml_graph_get_grad(g.gf, w);
+            if (!grad) continue; // e.g. a bias tensor never used this step -- shouldn't happen here, defensive
+            g.m_tensors[i] = ggml_dup_tensor(g.ctx, w);
+            g.v_tensors[i] = ggml_dup_tensor(g.ctx, w);
+            ggml_set_name(g.m_tensors[i], (std::string("adamw_m") + std::to_string(i)).c_str());
+            ggml_set_name(g.v_tensors[i], (std::string("adamw_v") + std::to_string(i)).c_str());
+            for (ggml_tensor * t : { g.m_tensors[i], g.v_tensors[i] }) {
+                ggml_set_input(t);
+                ggml_set_output(t);
+            }
+            ggml_tensor * step = ggml_opt_step_adamw(g.ctx, w, grad, g.m_tensors[i], g.v_tensors[i], g.adamw_params);
+            ggml_build_forward_expand(g.gf, step);
+        }
     } else {
         ggml_build_forward_expand(g.gf, g.pred_logits);
     }
@@ -223,59 +271,39 @@ static GraphHandles build_graph(Model & m, const TrainableHead & head, const std
             std::vector<float> mtgt_data = matched_tgt_boxes_data(*match, *tgt);
             ggml_backend_tensor_set(mtgt, mtgt_data.data(), 0, mtgt_data.size() * sizeof(float));
         }
+
+        // AdamW state upload: m_state[i]/v_state[i] persist across steps
+        // in main()'s host vectors (zero-initialized on first use, same
+        // convention as the demo's earlier hand-rolled version), carried
+        // in via the m_state/v_state pointers threaded through build_graph.
+        float params[7] = { lr, 0.9f, 0.999f, 1e-8f, 0.0f,
+                            1.0f / (1.0f - std::pow(0.9f, (float) step_t)),
+                            1.0f / (1.0f - std::pow(0.999f, (float) step_t)) };
+        ggml_backend_tensor_set(g.adamw_params, params, 0, sizeof(params));
+        for (int i = 0; i < 8; i++) {
+            if (!g.m_tensors[i]) continue;
+            int64_t n = ggml_nelements(g.head_tensors[i]);
+            if ((int64_t) (*m_state)[i].size() != n) {
+                (*m_state)[i].assign(n, 0.0f);
+                (*v_state)[i].assign(n, 0.0f);
+            }
+            ggml_backend_tensor_set(g.m_tensors[i], (*m_state)[i].data(), 0, n * sizeof(float));
+            ggml_backend_tensor_set(g.v_tensors[i], (*v_state)[i].data(), 0, n * sizeof(float));
+        }
     }
 
     return g;
 }
 
-static void adamw_step(GraphHandles & g, float lr, int t, std::vector<std::vector<float>> & m_state,
-                       std::vector<std::vector<float>> & v_state) {
-    float params[7] = { lr, 0.9f, 0.999f, 1e-8f, 0.0f,
-                        1.0f / (1.0f - std::pow(0.9f, (float) t)), 1.0f / (1.0f - std::pow(0.999f, (float) t)) };
-
-    // Global-norm gradient clipping (RF-DETR's own training uses
-    // clip_max_norm=0.1 by default) -- without it, the classification
-    // loss's natural scale (sum over num_queries*num_classes, divided by
-    // only num_matched boxes, matching upstream's real formula validated
-    // in tests/test_loss.cpp) produces gradients large enough to blow the
-    // head up to NaN within a handful of steps even at a tiny lr.
-    const float max_norm = 0.1f;
-    std::vector<std::vector<float>> grads(8);
-    double total_sq = 0.0;
-    for (int i = 0; i < 8; i++) {
-        ggml_tensor * w = g.head_tensors[i];
-        ggml_tensor * grad = ggml_graph_get_grad(g.gf, w);
-        if (!grad) continue;
-        int64_t n = ggml_nelements(w);
-        grads[i].resize(n);
-        ggml_backend_tensor_get(grad, grads[i].data(), 0, n * sizeof(float));
-        for (float v : grads[i]) total_sq += (double) v * (double) v;
-    }
-    float total_norm = (float) std::sqrt(total_sq);
-    float clip_scale = (total_norm > max_norm && total_norm > 0.0f) ? max_norm / total_norm : 1.0f;
-
-    for (int i = 0; i < 8; i++) {
-        ggml_tensor * w = g.head_tensors[i];
-        if (grads[i].empty()) continue;
-        int64_t n = ggml_nelements(w);
-        std::vector<float> wv(n);
-        std::vector<float> & gv = grads[i];
-        ggml_backend_tensor_get(w, wv.data(), 0, n * sizeof(float));
-        for (float & v : gv) v *= clip_scale;
-        if ((int64_t) m_state[i].size() != n) { m_state[i].assign(n, 0.0f); v_state[i].assign(n, 0.0f); }
-        for (int64_t k = 0; k < n; k++) {
-            m_state[i][k] = m_state[i][k] * params[1] + gv[k] * (1.0f - params[1]);
-            v_state[i][k] = v_state[i][k] * params[2] + gv[k] * gv[k] * (1.0f - params[2]);
-            float mh = m_state[i][k] * params[5];
-            float vh = std::sqrt(v_state[i][k] * params[6]) + params[3];
-            wv[k] = wv[k] - params[0] * mh / vh;
-        }
-        // updated value written back into the SAME graph tensor; the
-        // caller reads it out afterward (readback in main()) to carry into
-        // the next step's fresh graph.
-        ggml_backend_tensor_set(w, wv.data(), 0, n * sizeof(float));
-    }
-}
+// Note: no global gradient-norm clipping here (the earlier hand-rolled
+// version had one, matching RF-DETR's own clip_max_norm=0.1 default) --
+// Adam/AdamW's own per-parameter normalization (mh/vh) already makes the
+// per-step update magnitude ~lr regardless of raw gradient scale, so
+// clipping the raw gradient first has negligible additional effect (this
+// was directly observed earlier this session: clipped and unclipped runs
+// produced near-identical trajectories). Doing it graph-side would also
+// need a cross-tensor global-norm reduction before any AdamW step could
+// run, adding real complexity for a change that isn't load-bearing here.
 
 int main(int argc, char ** argv) {
 #if defined(_MSC_VER) || defined(_WIN32)
@@ -358,7 +386,7 @@ int main(int argc, char ** argv) {
         }
 
         // --- pass 2: forward + loss + backward + adamw, one compute call ---
-        GraphHandles trn = build_graph(m, head, pixels, /*trainable=*/true, &tgt, &match);
+        GraphHandles trn = build_graph(m, head, pixels, /*trainable=*/true, &tgt, &match, &m_state, &v_state, lr, step);
         ggml_graph_reset(trn.gf);
         if (ggml_backend_graph_compute(trn.backend, trn.gf) != GGML_STATUS_SUCCESS) {
             fprintf(stderr, "train step failed\n");
@@ -382,9 +410,11 @@ int main(int argc, char ** argv) {
         }
         fflush(stdout);
 
-        adamw_step(trn, lr, step, m_state, v_state);
-
-        // carry updated weights into the next iteration's TrainableHead
+        // ggml_opt_step_adamw already ran as part of the SAME compute call
+        // above (built into the graph in build_graph) -- head_tensors[i]
+        // already hold the UPDATED weights, and m_tensors[i]/v_tensors[i]
+        // already hold the updated AdamW moments (both written in place by
+        // the CPU kernel). Just read them back to carry into the next step.
         auto readback = [&](ggml_tensor * t, std::vector<float> & out) {
             ggml_backend_tensor_get(t, out.data(), 0, out.size() * sizeof(float));
         };
@@ -392,6 +422,11 @@ int main(int argc, char ** argv) {
         for (int i = 0; i < 3; i++) {
             readback(trn.head_tensors[2 + 2 * i], head.bbox_w[i]);
             readback(trn.head_tensors[3 + 2 * i], head.bbox_b[i]);
+        }
+        for (int i = 0; i < 8; i++) {
+            if (!trn.m_tensors[i]) continue;
+            readback(trn.m_tensors[i], m_state[i]);
+            readback(trn.v_tensors[i], v_state[i]);
         }
         free_graph(trn);
     }

@@ -328,9 +328,10 @@ variants for each (see their sections above), then phase-2 training.
       around by rebuilding a fresh graph per evaluation in the test.
 - [x] End-to-end training-step demo (`demos/train_step_demo.cpp`): loads
       the real RFDETRNano checkpoint, runs frozen backbone→decoder
-      forward, `hungarian_match`, `detection_loss`, backward, and a
-      hand-rolled AdamW update (same formula as `ggml_opt_step_adamw`'s
-      CPU kernel) on `class_embed`/`bbox_embed` only, training against a
+      forward, `hungarian_match`, `detection_loss`, backward, and (as of a
+      later session) the REAL `ggml_opt_step_adamw` graph op — see the
+      dedicated checklist item below — on `class_embed`/`bbox_embed` only,
+      training against a
       REAL COCO image + real annotations
       (`gen_reference/gen_reference_real_image.py`). Loss decreases
       steadily and stays bounded over 30 steps (0.59 → ~0.10 at lr=0.01).
@@ -379,9 +380,35 @@ variants for each (see their sections above), then phase-2 training.
       24-image sample is enough to prove the loader/cycling logic is
       correct; scaling up is a config change (more images in
       `data/val2017_sample/`), not a code change.
-- [ ] `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring (the demo hand-rolls
-      identical AdamW math as a host-side loop instead, to sidestep the
-      repeated-graph-execution gap above) once the dataloader lands.
+- [x] Real `ggml_opt_step_adamw` graph op wiring — `demos/train_step_demo.cpp`
+      no longer hand-rolls AdamW math host-side; `build_graph`'s trainable
+      path now creates `m`/`v` moment-state tensors per trainable tensor
+      and an `adamw_params` (7,) input, and builds `ggml_opt_step_adamw(ctx,
+      w, grad, m, v, adamw_params)` into the SAME single compute call as
+      forward+backward (confirmed via `ggml.c`'s constructor: the result is
+      a `ggml_view_tensor(ctx, a)`, i.e. it writes the update directly into
+      the weight's own buffer; the CPU kernel also updates `m`/`v` in
+      place — both read back after compute exactly like the head tensors
+      already were). Safe to build into one graph specifically because this
+      demo already rebuilds a fresh graph/context/allocator every step and
+      computes it exactly once — the "repeated graph execution corrupts
+      results" gap (`0003-training.md`) only bites when the SAME allocated
+      graph is computed more than once, which never happens here. Validated
+      over 30 steps across all 24 real dataset images (plus a wraparound
+      pass): loss stays finite and bounded throughout, same healthy
+      trajectory shape as the hand-rolled version. Global gradient-norm
+      clipping (present in the hand-rolled version) was dropped rather than
+      reimplemented graph-side — Adam/AdamW's own per-parameter
+      normalization already makes the per-step update magnitude ~lr
+      regardless of raw gradient scale, and this was directly observed
+      earlier this session (clipped vs unclipped hand-rolled runs produced
+      near-identical trajectories), so it isn't load-bearing here.
+      `ggml_opt_epoch` (a higher-level convenience wrapper over
+      `ggml_opt_step_adamw` for iterating a full dataset) not adopted — this
+      demo's per-step control flow (forward-only match pass, then
+      forward+backward+optimizer pass, two separate fresh graphs) doesn't
+      fit that wrapper's assumptions cleanly, and the manual loop already
+      works correctly.
 - [ ] (Deferred, only if scope widens later) Resolve deformable-attention's
       backward (Finding 3) if the decoder becomes trainable; wire
       `layer_norm_affine_diff` into the decoder's LayerNorms at that point.
