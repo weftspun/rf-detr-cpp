@@ -5,8 +5,8 @@ src/decoder.cpp. See docs/decisions/decoder.md for the verified key layout.
 
 Strips no fixed prefix (these are mostly top-level keys already); splits
 nn.MultiheadAttention's fused in_proj_weight/bias into separate q/k/v
-tensors; bakes the DETR sine-embedding scale (2*pi/dim_t, dim=128) as a
-constant tensor "decoder.sine_scale" since it isn't learned.
+tensors; bakes the DETR sine-embedding scale (2*pi/dim_t, dim=hidden_dim/2)
+as a constant tensor "decoder.sine_scale" since it isn't learned.
 
 Usage:
     uv run --with torch --with numpy --with gguf scripts/convert_decoder_to_gguf.py \
@@ -17,8 +17,6 @@ import sys
 import gguf
 import numpy as np
 import torch
-
-HIDDEN = 256
 
 TOP_LEVEL = ["class_embed", "bbox_embed", "query_feat", "refpoint_embed"]
 TRANSFORMER_PREFIXES = [
@@ -47,10 +45,11 @@ def dest_name(k: str, dec_layers: int) -> str | None:
 
 def main():
     if len(sys.argv) < 3:
-        print(f"usage: {sys.argv[0]} <checkpoint.pth> <out.gguf> [dec_layers=2]", file=sys.stderr)
+        print(f"usage: {sys.argv[0]} <checkpoint.pth> <out.gguf> [dec_layers=2] [hidden_dim=256]", file=sys.stderr)
         sys.exit(1)
     ckpt_path, out_path = sys.argv[1], sys.argv[2]
     dec_layers = int(sys.argv[3]) if len(sys.argv) > 3 else 2
+    hidden_dim = int(sys.argv[4]) if len(sys.argv) > 4 else 256
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     sd = ckpt["model"] if "model" in ckpt else ckpt
@@ -68,16 +67,20 @@ def main():
 
     for i in range(dec_layers):
         pre = f"transformer.decoder.layers.{i}.self_attn"
-        w = sd[f"{pre}.in_proj_weight"].detach().to(torch.float32).numpy()  # (768,256)
-        b = sd[f"{pre}.in_proj_bias"].detach().to(torch.float32).numpy()    # (768,)
+        w = sd[f"{pre}.in_proj_weight"].detach().to(torch.float32).numpy()  # (3*hidden_dim,hidden_dim)
+        b = sd[f"{pre}.in_proj_bias"].detach().to(torch.float32).numpy()    # (3*hidden_dim,)
         for j, part in enumerate(["q", "k", "v"]):
             writer.add_tensor(f"decoder.layers.{i}.self_attn.{part}_proj.weight",
-                              np.ascontiguousarray(w[j * HIDDEN:(j + 1) * HIDDEN]))
+                              np.ascontiguousarray(w[j * hidden_dim:(j + 1) * hidden_dim]))
             writer.add_tensor(f"decoder.layers.{i}.self_attn.{part}_proj.bias",
-                              np.ascontiguousarray(b[j * HIDDEN:(j + 1) * HIDDEN]))
+                              np.ascontiguousarray(b[j * hidden_dim:(j + 1) * hidden_dim]))
             n_written += 1
 
-    dim = 128
+    # d_model/2 per coordinate (gen_sineembed_for_position is called with
+    # self.d_model // 2 upstream, not its default dim=128 -- 128 only
+    # happens to equal 256/2, which every variant before hidden_dim=384
+    # (RFDETRLargeDeprecated) shared).
+    dim = hidden_dim // 2
     dim_t = 10000.0 ** (2 * (np.arange(dim) // 2) / dim)
     # numpy shape (dim,1) -> gguf writer reverses dims -> ggml ne=(1,dim), the
     # (k=1,n=dim) shape ggml_mul_mat needs for the outer-product trick in

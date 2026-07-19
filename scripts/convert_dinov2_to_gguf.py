@@ -77,6 +77,21 @@ VARIANTS = {
         out_feature_indexes_raw=[2, 5, 8, 11],
         native_grid=37, runtime_grid=40,
     ),
+    # RFDETRLargeDeprecatedConfig: dinov2_windowed_base (NOT _small like
+    # every other variant) -- hidden=768, n_head=12, same patch_size==14/
+    # num_windows=4/out_feature_indexes_raw/native+runtime grid as "base"
+    # (checkpoint-verified via rfdetr.models.backbone.dinov2.get_config("base")
+    # and Backbone.__init__'s DinoV2(size=...) resolution, not assumed).
+    # Distinct from every other size (Nano/Small/Medium/Base/Large) in that
+    # the DECODER hidden_dim is also 384 (not the usual 256) and
+    # projector_scale=["P3","P5"] (num_feature_levels=2) -- see
+    # docs/decisions/0001-open-work.md.
+    "large-deprecated": dict(
+        hidden=768, n_layer=12, n_head=12, patch_size=14, n_register=0,
+        num_windows=4, ln_eps=1e-6,
+        out_feature_indexes_raw=[2, 5, 8, 11],
+        native_grid=37, runtime_grid=40,
+    ),
 }
 
 

@@ -167,17 +167,23 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
 
     ggml_tensor * ref_points = bbox_reparam_decode(ctx, subset, ts_boxes); // (4, num_queries, 1) -- fixed for every layer
 
-    // query positional embedding (once, lite_refpoint_refine)
-    ggml_tensor * sine_scale = m.get("decoder.sine_scale"); // (1,128) constant, GGUF-baked: 2*pi/dim_t
+    // query positional embedding (once, lite_refpoint_refine). Sine dim is
+    // d_model/2 per coordinate (gen_sineembed_for_position is called with
+    // self.d_model // 2 upstream, NOT its default dim=128 -- 128 only
+    // happens to equal 256/2, which every variant validated before
+    // RFDETRLargeDeprecated's hidden_dim=384 shared) so 4 coords concat to
+    // 4*(hd/2) = 2*hd, matching ref_point_head's MLP(2*d_model, ...) input.
+    const int sine_dim = hd / 2;
+    ggml_tensor * sine_scale = m.get("decoder.sine_scale"); // (1,sine_dim) constant, GGUF-baked: 2*pi/dim_t
     auto coord = [&](int off) {
         return ggml_cont(ctx, ggml_view_3d(ctx, ref_points, 1, p.num_queries, 1, ref_points->nb[1], ref_points->nb[2], (size_t) off * sizeof(float)));
     };
-    ggml_tensor * pos_y = sine_embed_1coord(ctx, coord(1), sine_scale, 128);
-    ggml_tensor * pos_x = sine_embed_1coord(ctx, coord(0), sine_scale, 128);
-    ggml_tensor * pos_w = sine_embed_1coord(ctx, coord(2), sine_scale, 128);
-    ggml_tensor * pos_h = sine_embed_1coord(ctx, coord(3), sine_scale, 128);
-    ggml_tensor * sine = ggml_concat(ctx, ggml_concat(ctx, pos_y, pos_x, 0), ggml_concat(ctx, pos_w, pos_h, 0), 0); // (512,nq,1)
-    ggml_tensor * query_pos = mlp(m, sine, "decoder.ref_point_head", 2); // (256,nq,1), ReLU between layers 0/1
+    ggml_tensor * pos_y = sine_embed_1coord(ctx, coord(1), sine_scale, sine_dim);
+    ggml_tensor * pos_x = sine_embed_1coord(ctx, coord(0), sine_scale, sine_dim);
+    ggml_tensor * pos_w = sine_embed_1coord(ctx, coord(2), sine_scale, sine_dim);
+    ggml_tensor * pos_h = sine_embed_1coord(ctx, coord(3), sine_scale, sine_dim);
+    ggml_tensor * sine = ggml_concat(ctx, ggml_concat(ctx, pos_y, pos_x, 0), ggml_concat(ctx, pos_w, pos_h, 0), 0); // (2*hd,nq,1)
+    ggml_tensor * query_pos = mlp(m, sine, "decoder.ref_point_head", 2); // (hd,nq,1), ReLU between layers 0/1
 
     // keypoint init (once, decoder-level ConditionalQueryInitializer conditioned
     // on the initial tgt -- before any decoder layer runs)

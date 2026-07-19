@@ -64,7 +64,21 @@ LARGE = dict(
     out_feature_indexes_raw=[3, 6, 9, 12],
 )
 
-VARIANTS = {"nano": NANO, "base": BASE, "small": SMALL, "medium": MEDIUM, "large": LARGE}
+# RFDETRLargeDeprecatedConfig: dinov2_windowed_base (768-wide), same
+# patch14/native-37/runtime-40 interpolation path as BASE -- see
+# scripts/convert_dinov2_to_gguf.py's "large-deprecated" entry for the
+# checkpoint-verification note.
+LARGE_DEPRECATED = dict(
+    hidden_size=768, num_hidden_layers=12, num_attention_heads=12,
+    patch_size=14, num_register_tokens=0, num_windows=4,
+    image_size=518, resolution=560,
+    out_feature_indexes_raw=[2, 5, 8, 11],
+)
+
+VARIANTS = {
+    "nano": NANO, "base": BASE, "small": SMALL, "medium": MEDIUM, "large": LARGE,
+    "large-deprecated": LARGE_DEPRECATED,
+}
 
 
 def write_arr(f, arr: np.ndarray):
