@@ -15,6 +15,11 @@ architecture notes this port is working from,
 [docs/decisions/0001-open-work.md](docs/decisions/0001-open-work.md) for the
 consolidated open-task checklist across all milestones.
 
+[formal/rfdetr_proofs/](formal/rfdetr_proofs/) is a small Lean4/Mathlib
+project that formally verifies (not just numerically diff-tests) the
+backward-pass primitive tricks Phase 2 training relies on — see
+[docs/decisions/0004-formal-verification.md](docs/decisions/0004-formal-verification.md).
+
 ## Status
 
 | Milestone | Test | Result |

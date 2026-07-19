@@ -330,6 +330,15 @@ variants for each (see their sections above), then phase-2 training.
 - [ ] (Deferred, only if scope widens later) Resolve deformable-attention's
       backward (Finding 3) if the decoder becomes trainable; wire
       `layer_norm_affine_diff` into the decoder's LayerNorms at that point.
+- [x] Formal verification (Lean4/Mathlib) of the backward-pass primitive
+      tricks (`clamp_diff`, `elementwise_max`/`min`, GIoU boundedness) —
+      `formal/rfdetr_proofs/`, see
+      `docs/decisions/0004-formal-verification.md`. Twelve theorems, zero
+      `sorry`s/`axiom`s (one cited external fact: `union ≤ enclose`, from
+      the GIoU paper). No bug found — rules out "one of these identities is
+      subtly wrong" as a contributing hypothesis for the still-open
+      SegXLarge/mask-head items above, same spirit as the blanket-
+      `ggml_set_output` experiment that ruled out buffer reuse.
 
 ### Documentation / process
 
