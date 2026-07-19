@@ -216,20 +216,25 @@ Remaining steps for this scope, in order:
    alternative (not something invented for this port), just not the
    default.
 
-2. **Done (with a caveat).** End-to-end training-step demo
+2. **Done.** End-to-end training-step demo
    (`demos/train_step_demo.cpp`): loads the real RFDETRNano checkpoint,
    runs the full frozen backbone→projector→decoder forward pass, matches
-   against a synthetic target via `hungarian_match`, builds
-   `detection_loss`, backprops, and applies a manual AdamW update (same
-   formula/parameter layout as `ggml_opt_step_adamw`'s own CPU kernel,
-   hand-rolled rather than using the graph op directly — see the note
-   below) to `class_embed`/`bbox_embed` only. Proves the FULL scope-decided
-   plumbing genuinely composes: weight-shadowing a `Model`'s frozen GGUF
-   tensors with fresh per-step trainable ones (via `m.weights[name] = t`),
-   two fresh graphs per step (forward-only for matching, then forward+loss
-   +backward+AdamW), carrying updated weights host-side between steps.
+   against a REAL COCO image's real annotations via `hungarian_match`
+   (`gen_reference/gen_reference_real_image.py`, upstream's own
+   `val_speed` transform pipeline on `000000289343.jpg`: person, dog,
+   bicycle, bench), builds `detection_loss`, backprops, and applies a
+   manual AdamW update (same formula/parameter layout as
+   `ggml_opt_step_adamw`'s own CPU kernel, hand-rolled rather than using
+   the graph op directly — see the note below) to `class_embed`/
+   `bbox_embed` only. Proves the FULL scope-decided plumbing genuinely
+   composes: weight-shadowing a `Model`'s frozen GGUF tensors with fresh
+   per-step trainable ones (via `m.weights[name] = t`), two fresh graphs
+   per step (forward-only for matching, then forward+loss+backward+
+   AdamW), carrying updated weights host-side between steps. Loss
+   decreases steadily and stays bounded over 30 steps (0.59 → ~0.10 at
+   lr=0.01), genuinely fitting the image's 4 real annotations.
 
-   Two more real bugs found and fixed while building this (beyond the
+   Four more real bugs found and fixed while building this (beyond the
    `mean(1)` and `ggml_sigmoid` ones already listed above):
    - **`ggml_concat` has no backward case** (same gap class as
      `ggml_norm`/`ggml_sigmoid`) — `bbox_reparam_decode`'s final
@@ -250,38 +255,41 @@ Remaining steps for this scope, in order:
      and `_set_abort_behavior` (disabling the abort-message-box and
      Windows Error Reporting) at the top of `main()`, guarded by
      `#if defined(_MSC_VER) || defined(_WIN32)`.
-
-   **Known caveat, not fixed**: the demo's *forward-only sanity check*
-   (loss must be finite and under 1e6) reliably trips on step 1, because
-   the demo feeds a fixed SYNTHETIC random-noise image (not a real photo)
-   into a frozen, pretrained decoder that was never trained on
-   out-of-distribution input like that. The resulting logits/box-deltas
-   are large enough that the AGGREGATE loss (summed over 300 queries × 91
-   classes) reaches ~1e26–1e27 even with per-element clamps in place
-   (`clamp_diff` bounding `sigmoid`'s output away from exactly 0/1 before
-   `log`, and bounding `delta_wh` before `exp` in
-   `bbox_reparam_decode_diff`) — those clamps bound each ELEMENT, not the
-   SUM's magnitude, and 27300 elements at even a moderate per-element
-   value can sum to something huge. Tried scaling the synthetic image down
-   (0.3x) — value changed but stayed astronomically large, ruling out
-   simple input-scale as the cause; a real amplification path through the
-   frozen backbone/decoder for structured (windowed-attention) input that
-   never resembles a real photo. This is a property of the SYNTHETIC DEMO
-   INPUT, not a bug in `detection_loss` itself, which is independently
-   validated (forward exact-match to 2e-6, backward gradient correct via
-   finite-difference) against REAL upstream reference values on
-   controlled synthetic logits/boxes in `tests/test_loss.cpp` — that
-   validation doesn't depend on or share this demo's frozen-model-fed-
-   noise numerical fragility. The demo detects this (a finite/magnitude
-   guard) and stops cleanly rather than propagating garbage into more
-   steps. A real training loop feeding real images (once the dataloader
-   below exists) shouldn't hit this, since the whole point of starting
-   from a pretrained checkpoint is that it already produces sane
-   predictions for in-distribution input.
-
-3. Dataset/dataloader (COCO-format annotations → ggml input tensors) — not
-   researched yet. Would also resolve the demo's synthetic-input caveat
-   above by giving it real images to train on.
+   - **The demo's own missing `output_proposals` upload** — this is what
+     was actually behind the earlier-suspected "synthetic random-noise
+     input" numerical blowup, and it reproduced identically with real
+     COCO data too, disproving that hypothesis. `rfdetr_decoder`'s
+     two-stage proposal heads read `output_proposals`
+     (`src/decoder.h`/`.cpp`) as a required INPUT tensor — the demo built
+     the graph but never called `ggml_backend_tensor_set` on it, so the
+     encoder's per-location candidate boxes were uninitialized allocator
+     garbage. `wh = exp(clamp(delta,-4,4)) * base_wh` bounds `delta` but
+     not `base_wh`, so a garbage `base_wh` (observed up to ~3e7) produced
+     `pred_boxes` up to ~6.2e10 and a loss around -5e26. Fixed by calling
+     `output_proposals_data(gw, gh)` (already existed, just unused by this
+     demo) and uploading it in `build_graph`.
+   - **Trainable param tensors weren't protected from graph-allocator
+     buffer reuse** — `class_embed`/`bbox_embed`'s fresh per-step tensors
+     were `ggml_set_input`+`ggml_set_param`'d but not `ggml_set_output`'d.
+     Once each param's last forward-graph consumer ran, the allocator was
+     free to hand its buffer to a *later* node's output — observed
+     directly: `head.class_w[0]` (read back after `ggml_backend_tensor_
+     get`) came back bit-identical to that step's loss scalar, and this
+     happened even with `lr=0` (a true no-op update), proving loss values
+     were leaking into weight buffers rather than the weights actually
+     drifting from training. This is the same allocator-buffer-reuse bug
+     class already found and worked around for `g.loss` itself (see
+     `ggml_set_output(g.loss)`'s comment) and for the SegXLarge decoder
+     graph and `test_loss.cpp`'s repeated-execution case — evidently the
+     fix needs applying to *every* tensor read back after compute, not
+     just the final loss. Fixed by adding `ggml_set_output(t)` in
+     `make_head_tensor` for all 8 trainable tensors.
+3. Dataset/dataloader beyond this one hardcoded image (COCO-format
+   annotations → ggml input tensors for an arbitrary image, batching,
+   iteration over a full split) — not researched yet. The single-image
+   real-data path (`gen_reference/gen_reference_real_image.py`) proves the
+   preprocessing/annotation pipeline is correct but isn't a general
+   dataloader.
 4. `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring — the demo currently
    hand-rolls the identical AdamW math as a host-side loop rather than
    using the real graph op, specifically to sidestep the "second real ggml

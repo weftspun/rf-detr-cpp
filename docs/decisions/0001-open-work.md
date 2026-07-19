@@ -274,25 +274,32 @@ variants for each (see their sections above), then phase-2 training.
       the real RFDETRNano checkpoint, runs frozen backbone→decoder
       forward, `hungarian_match`, `detection_loss`, backward, and a
       hand-rolled AdamW update (same formula as `ggml_opt_step_adamw`'s
-      CPU kernel) on `class_embed`/`bbox_embed` only. Proves the full
-      scope-decided plumbing composes end-to-end. Found and fixed two more
-      real bugs: `ggml_concat` has no backward case either (fixed via a
-      `ggml_set`-based `bbox_reparam_decode_diff`, forward-identical,
-      zero regression on all 7 existing inference tests), and MSVC Debug
-      builds pop a blocking assert dialog that hangs headless runs forever
-      (fixed via `_CrtSetReportMode` at startup — likely explains an
-      earlier session's "hung modal" report too). **Known caveat**: the
-      demo's synthetic random-noise input (not a real photo) produces
-      large enough frozen-decoder activations that the aggregate loss
-      still reaches ~1e26 despite per-element clamps; the demo detects
-      this and stops cleanly rather than crashing. Doesn't affect
-      `detection_loss`'s own validation (independently verified against
-      real upstream values on controlled synthetic data in
-      `tests/test_loss.cpp`) — see `0003-training.md` for the full
-      writeup.
-- [ ] Dataset/dataloader (COCO-format annotations → ggml tensors) — not
-      yet researched. Would also resolve the demo's synthetic-input
-      caveat by giving it real images.
+      CPU kernel) on `class_embed`/`bbox_embed` only, training against a
+      REAL COCO image + real annotations
+      (`gen_reference/gen_reference_real_image.py`). Loss decreases
+      steadily and stays bounded over 30 steps (0.59 → ~0.10 at lr=0.01).
+      Proves the full scope-decided plumbing composes end-to-end. Found
+      and fixed four real bugs: `ggml_concat` has no backward case either
+      (fixed via a `ggml_set`-based `bbox_reparam_decode_diff`,
+      forward-identical, zero regression on all 7 existing inference
+      tests); MSVC Debug builds pop a blocking assert dialog that hangs
+      headless runs forever (fixed via `_CrtSetReportMode` at startup —
+      likely explains an earlier session's "hung modal" report too); the
+      demo never uploaded `rfdetr_decoder`'s required `output_proposals`
+      input tensor, leaving it as allocator garbage that fed a huge
+      `base_wh` into the (correctly-clamped-per-element) box decode,
+      producing an aggregate loss around -1e26 — this, not synthetic
+      input, was the real root cause of the previously-suspected
+      "synthetic-noise numerical blowup"; and the demo's trainable
+      `class_embed`/`bbox_embed` tensors weren't protected from
+      graph-allocator buffer reuse (missing `ggml_set_output`), so a
+      later node's output silently overwrote a param tensor's buffer
+      before host readback — same bug class as the `g.loss`-buffer-reuse
+      fix already documented below, just not yet applied to param
+      tensors. See `0003-training.md` for the full writeup.
+- [ ] Dataset/dataloader beyond this one hardcoded real image (COCO-format
+      annotations → ggml tensors for an arbitrary image, batching,
+      iteration over a full split) — not yet researched.
 - [ ] `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring (the demo hand-rolls
       identical AdamW math as a host-side loop instead, to sidestep the
       repeated-graph-execution gap above) once the dataloader lands.

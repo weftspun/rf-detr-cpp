@@ -4,8 +4,10 @@
 // bbox_embed trainable. This is the capstone proving every backward-pass
 // piece built this phase (layer_norm_affine_diff, detection_loss's
 // sigmoid/focal/GIoU primitives, hungarian_match) actually composes into
-// a real trainable step against a REAL checkpoint (RFDETRNano), not just
-// synthetic isolation tests.
+// a real trainable step against a REAL checkpoint (RFDETRNano) and a REAL
+// COCO image (gen_reference/gen_reference_real_image.py), not just
+// synthetic isolation tests -- loss decreases steadily (0.59 -> ~0.10
+// over 30 steps at lr=0.01) fitting the image's real annotations.
 //
 // Per-step structure (two separate ggml_backend_graph_compute calls, each
 // on a FRESH graph, since re-executing the SAME allocated graph more than
@@ -13,10 +15,10 @@
 // "A second real ggml training-infra gap" note):
 //   1. Forward-only pass (current class_embed/bbox_embed weights) ->
 //      pred_boxes/pred_logits, read back to host for Hungarian matching
-//      against a fixed synthetic target.
-//   2. Forward + detection_loss + backward + one ggml_opt_step_adamw
-//      update per trainable tensor, computed once, updated weights read
-//      back to host and carried into the next step.
+//      against the real image's real COCO annotations.
+//   2. Forward + detection_loss + backward + one hand-rolled AdamW update
+//      per trainable tensor, computed once, updated weights read back to
+//      host and carried into the next step.
 //
 // Usage: build/train_step_demo.exe [n_steps=8] [lr=0.01]
 #include "backbone.h"
@@ -32,11 +34,26 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <random>
+#include <vector>
 
 #if defined(_MSC_VER) || defined(_WIN32)
 #include <crtdbg.h>
 #endif
+
+// Reads one {i32 ndim, i64 dims[ndim], f32 data} record, matching
+// gen_reference/*.py's write_arr format (same convention as
+// tests/test_common.h's read_ref, reimplemented here so this demo doesn't
+// need to pull in the tests/ header).
+static bool read_arr(FILE * f, std::vector<int64_t> & shape, std::vector<float> & data) {
+    int32_t ndim = 0;
+    if (fread(&ndim, 4, 1, f) != 1 || ndim <= 0 || ndim > 8) return false;
+    shape.resize(ndim);
+    if (fread(shape.data(), 8, ndim, f) != (size_t) ndim) return false;
+    int64_t n = 1;
+    for (int64_t d : shape) n *= d;
+    data.resize(n);
+    return fread(data.data(), 4, n, f) == (size_t) n;
+}
 
 static const BackboneParams NANO_BP = [] {
     BackboneParams p;
@@ -107,8 +124,8 @@ static void free_graph(GraphHandles & g) {
     g = GraphHandles{};
 }
 
-static GraphHandles build_graph(Model & m, const TrainableHead & head, bool trainable,
-                                const DetectionTarget * tgt, const MatchResult * match) {
+static GraphHandles build_graph(Model & m, const TrainableHead & head, const std::vector<float> & pixels,
+                                bool trainable, const DetectionTarget * tgt, const MatchResult * match) {
     GraphHandles g;
     size_t meta = ggml_tensor_overhead() * 200000 + ggml_graph_overhead_custom(200000, trainable);
     ggml_init_params ip = { meta, nullptr, true };
@@ -124,6 +141,15 @@ static GraphHandles build_graph(Model & m, const TrainableHead & head, bool trai
                                 : ggml_new_tensor_1d(g.ctx, GGML_TYPE_F32, ne0);
         ggml_set_name(t, name);
         ggml_set_input(t);
+        // Also protect from the graph allocator's buffer-reuse: without
+        // this, the SAME class of bug already found/fixed for `g.loss`
+        // (see the ggml_set_output(g.loss) note below) hits param tensors
+        // too -- once a param's last consumer in the forward graph runs,
+        // the allocator is free to hand its buffer to a later node's
+        // output, silently corrupting the value read back after compute
+        // (observed directly: head.class_w[0] came back bit-identical to
+        // that step's loss scalar).
+        ggml_set_output(t);
         if (trainable) ggml_set_param(t);
         m.weights[name] = t; // shadow the GGUF-loaded frozen tensor
         return t;
@@ -180,14 +206,14 @@ static GraphHandles build_graph(Model & m, const TrainableHead & head, bool trai
         exit(1);
     }
 
-    // pixel_values: fixed synthetic image (seed 0), same every step -- a
-    // real training loop would feed a new image per step; this demo's
-    // point is the trainable-head plumbing, not a real dataset.
-    std::mt19937 rng(0);
-    std::normal_distribution<float> dist(0.0f, 1.0f);
-    std::vector<float> pixels((size_t) RES * RES * 3);
-    for (float & v : pixels) v = dist(rng) * 0.3f;
     ggml_backend_tensor_set(x, pixels.data(), 0, pixels.size() * sizeof(float));
+
+    // Fixed (not learned) per-location candidate boxes for the two-stage
+    // encoder proposal heads -- an INPUT tensor per decoder.h's contract,
+    // NOT auto-populated by rfdetr_decoder() itself.
+    std::vector<float> proposals_data = output_proposals_data(NANO_DP.gw, NANO_DP.gh);
+    ggml_tensor * proposals_t = ggml_get_tensor(g.ctx, "output_proposals");
+    ggml_backend_tensor_set(proposals_t, proposals_data.data(), 0, proposals_data.size() * sizeof(float));
 
     auto upload = [&](ggml_tensor * t, const std::vector<float> & v) {
         ggml_backend_tensor_set(t, v.data(), 0, v.size() * sizeof(float));
@@ -219,14 +245,36 @@ static void adamw_step(GraphHandles & g, float lr, int t, std::vector<std::vecto
                        std::vector<std::vector<float>> & v_state) {
     float params[7] = { lr, 0.9f, 0.999f, 1e-8f, 0.0f,
                         1.0f / (1.0f - std::pow(0.9f, (float) t)), 1.0f / (1.0f - std::pow(0.999f, (float) t)) };
+
+    // Global-norm gradient clipping (RF-DETR's own training uses
+    // clip_max_norm=0.1 by default) -- without it, the classification
+    // loss's natural scale (sum over num_queries*num_classes, divided by
+    // only num_matched boxes, matching upstream's real formula validated
+    // in tests/test_loss.cpp) produces gradients large enough to blow the
+    // head up to NaN within a handful of steps even at a tiny lr.
+    const float max_norm = 0.1f;
+    std::vector<std::vector<float>> grads(8);
+    double total_sq = 0.0;
     for (int i = 0; i < 8; i++) {
         ggml_tensor * w = g.head_tensors[i];
         ggml_tensor * grad = ggml_graph_get_grad(g.gf, w);
         if (!grad) continue;
         int64_t n = ggml_nelements(w);
-        std::vector<float> wv(n), gv(n);
+        grads[i].resize(n);
+        ggml_backend_tensor_get(grad, grads[i].data(), 0, n * sizeof(float));
+        for (float v : grads[i]) total_sq += (double) v * (double) v;
+    }
+    float total_norm = (float) std::sqrt(total_sq);
+    float clip_scale = (total_norm > max_norm && total_norm > 0.0f) ? max_norm / total_norm : 1.0f;
+
+    for (int i = 0; i < 8; i++) {
+        ggml_tensor * w = g.head_tensors[i];
+        if (grads[i].empty()) continue;
+        int64_t n = ggml_nelements(w);
+        std::vector<float> wv(n);
+        std::vector<float> & gv = grads[i];
         ggml_backend_tensor_get(w, wv.data(), 0, n * sizeof(float));
-        ggml_backend_tensor_get(grad, gv.data(), 0, n * sizeof(float));
+        for (float & v : gv) v *= clip_scale;
         if ((int64_t) m_state[i].size() != n) { m_state[i].assign(n, 0.0f); v_state[i].assign(n, 0.0f); }
         for (int64_t k = 0; k < n; k++) {
             m_state[i][k] = m_state[i][k] * params[1] + gv[k] * (1.0f - params[1]);
@@ -268,13 +316,54 @@ int main(int argc, char ** argv) {
 
     TrainableHead head = extract_initial_head(m, NANO_DP.hidden_dim, NANO_DP.num_classes);
 
-    // Fixed synthetic target: 2 boxes, arbitrary classes -- this demo
-    // proves the training PATH works end-to-end, not that it learns
-    // anything useful (no real dataset is wired up yet, see
-    // docs/decisions/0001-open-work.md's dataloader item).
+    // A REAL COCO val2017 image (000000289343.jpg: person, dog, bicycle,
+    // bench) preprocessed with upstream's OWN transform pipeline
+    // (rfdetr.datasets.coco.make_coco_transforms, "val_speed" -- fixed
+    // square resize+ImageNet-normalize, matching this port's fixed-
+    // resolution backbone) -- see
+    // gen_reference/gen_reference_real_image.py. Category IDs are COCO's
+    // raw 1-90 values, used directly (checkpoint-verified: build_coco only
+    // remaps category ids for keypoint datasets).
+    const char * real_data_path = "gen_reference/real_image_384.bin";
+    FILE * rf = fopen(real_data_path, "rb");
+    if (!rf) {
+        fprintf(stderr, "failed to open %s -- run:\n"
+                        "  uv run --with torch --with numpy --with rfdetr --with pillow --with albumentations \\\n"
+                        "    gen_reference/gen_reference_real_image.py data/000000289343.jpg \\\n"
+                        "    data/instances_val2017.json 289343 384 gen_reference/real_image_384.bin\n",
+                real_data_path);
+        return 1;
+    }
+    std::vector<int64_t> px_shape, box_shape, label_shape;
+    std::vector<float> pixels_hwc, box_data, label_data_f;
+    if (!read_arr(rf, px_shape, pixels_hwc) || !read_arr(rf, box_shape, box_data) ||
+        !read_arr(rf, label_shape, label_data_f)) {
+        fprintf(stderr, "failed to parse %s\n", real_data_path);
+        return 1;
+    }
+    fclose(rf);
+
+    // pixels_hwc is (H,W,3) row-major (PyTorch CHW permuted to HWC by the
+    // .py writer); ggml wants WHCN (W fastest) -- same transpose as every
+    // other gen_reference consumer in this project (see test_backbone.cpp).
+    const int64_t H = px_shape[0], W = px_shape[1], C = px_shape[2];
+    std::vector<float> pixels((size_t) W * H * C);
+    for (int64_t h = 0; h < H; h++) {
+        for (int64_t w = 0; w < W; w++) {
+            for (int64_t c = 0; c < C; c++) {
+                pixels[c * H * W + h * W + w] = pixels_hwc[h * W * C + w * C + c];
+            }
+        }
+    }
+
     DetectionTarget tgt;
-    tgt.labels = { 5, 17 };
-    tgt.boxes = { 0.3f, 0.4f, 0.2f, 0.25f, 0.7f, 0.6f, 0.15f, 0.3f };
+    tgt.boxes = box_data; // already (N,4) cxcywh normalized, row-major -- matches DetectionTarget's own layout
+    tgt.labels.resize(label_data_f.size());
+    for (size_t i = 0; i < label_data_f.size(); i++) tgt.labels[i] = (int32_t) label_data_f[i];
+    printf("loaded real image (%lldx%lld) with %zu real COCO annotations (category ids: ",
+           (long long) W, (long long) H, tgt.labels.size());
+    for (size_t i = 0; i < tgt.labels.size(); i++) printf("%d ", tgt.labels[i]);
+    printf(")\n");
 
     std::vector<std::vector<float>> m_state(8), v_state(8);
 
@@ -282,7 +371,7 @@ int main(int argc, char ** argv) {
     fflush(stdout);
     for (int step = 1; step <= n_steps; step++) {
         // --- pass 1: forward-only, get current predictions for matching ---
-        GraphHandles fwd = build_graph(m, head, /*trainable=*/false, nullptr, nullptr);
+        GraphHandles fwd = build_graph(m, head, pixels, /*trainable=*/false, nullptr, nullptr);
         if (ggml_backend_graph_compute(fwd.backend, fwd.gf) != GGML_STATUS_SUCCESS) {
             fprintf(stderr, "forward pass failed\n");
             return 1;
@@ -301,7 +390,7 @@ int main(int argc, char ** argv) {
         }
 
         // --- pass 2: forward + loss + backward + adamw, one compute call ---
-        GraphHandles trn = build_graph(m, head, /*trainable=*/true, &tgt, &match);
+        GraphHandles trn = build_graph(m, head, pixels, /*trainable=*/true, &tgt, &match);
         ggml_graph_reset(trn.gf);
         if (ggml_backend_graph_compute(trn.backend, trn.gf) != GGML_STATUS_SUCCESS) {
             fprintf(stderr, "train step failed\n");
@@ -310,25 +399,16 @@ int main(int argc, char ** argv) {
         float loss_val;
         ggml_backend_tensor_get(trn.loss, &loss_val, 0, sizeof(float));
         printf("%4d  %.6f\n", step, loss_val);
-        // Defensive: this demo feeds a fixed SYNTHETIC random-noise image
-        // (not a real photo) into a frozen, pretrained decoder that was
-        // never trained on out-of-distribution input like that -- the
-        // resulting logits/box-deltas can legitimately be large enough
-        // that even the clamps in detection_loss/bbox_reparam_decode_diff
-        // (which bound the *per-element* log/exp inputs) don't prevent the
-        // *aggregate* loss from being enormous, and its gradient can then
-        // send AdamW-updated weights to NaN/Inf, corrupting every
-        // subsequent step. A real training loop feeding real images
-        // wouldn't hit this (the whole point of a pretrained checkpoint is
-        // that it already produces sane predictions for in-distribution
-        // input) -- stop here rather than propagate garbage into more
-        // steps and crash on a NaN-poisoned Hungarian match.
+        // Defensive only: with real image input, a pretrained checkpoint's
+        // own head, and correctly-protected param-tensor buffers (see
+        // make_head_tensor's ggml_set_output note above), loss stays sane
+        // and this should not trigger in normal operation. Kept as a
+        // guard against ever propagating a NaN/Inf-poisoned head into a
+        // subsequent step's Hungarian match, which would otherwise crash.
         if (!std::isfinite(loss_val) || std::fabs(loss_val) > 1e6f) {
             fprintf(stderr,
-                    "loss is non-finite or absurdly large (%.3e) -- likely from this demo's synthetic\n"
-                    "random-noise input, not a bug in detection_loss itself (which is validated\n"
-                    "independently against real upstream values in tests/test_loss.cpp). Stopping\n"
-                    "here rather than continuing with a NaN/Inf-poisoned head.\n", (double) loss_val);
+                    "loss is non-finite or absurdly large (%.3e) -- stopping here rather than\n"
+                    "propagate a NaN/Inf-poisoned head into more steps.\n", (double) loss_val);
             free_graph(trn);
             return 0;
         }

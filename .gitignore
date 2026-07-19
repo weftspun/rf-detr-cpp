@@ -9,3 +9,4 @@ reference_*.bin
 reference_*.npz
 gen_reference/*.bin
 /*.log
+data/
