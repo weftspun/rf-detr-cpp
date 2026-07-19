@@ -125,7 +125,42 @@ what was open and when it closed.
       and the C++ `DecoderParams`), not trusting the config class's own
       default. Same encoder/window pattern as SegMedium, resolution 504
       (grid 42), `dec_layers=5`.
-- [ ] Other segmentation variants (XL/2XL) unvalidated
+- [ ] **RFDETRSegXLarge fails with a large, real divergence** (`test_segmentation_xlarge`:
+      boxes max-abs-diff 0.996, logits 3.4, masks ~59 — nothing like the
+      small amplified-float-drift residual every other variant shows).
+      Extensively bisected this session (checkpoint MD5-verified, all
+      config fields checkpoint-verified, GGUF weight VALUES spot-checked
+      byte-for-byte against the checkpoint for the projector and
+      enc_output/enc_out_bbox_embed — all correct):
+      - `dinov2_backbone`'s taps match the real encoder exactly (1.2e-4) in
+        isolation.
+      - `projector_p4`'s output matches the real `MultiScaleProjector`
+        exactly (3e-6) **when computed in an isolated graph** (backbone+
+        projector only, nothing else).
+      - The SAME computation, embedded in the full backbone+projector+
+        decoder graph (dec_layers=6, 2704 tokens — the largest decoder
+        graph in this project), produces a **corrupted** `memory` tensor
+        (the reshaped/permuted/cont'd projector output fed to the
+        decoder) — max-abs-diff ~4 against the same reference.
+      - Explicitly calling `ggml_set_output()` on `memory` (and
+        `output_memory`) before building the graph **fixes `memory`'s own
+        corruption** (confirmed exact match again), but a further
+        downstream tensor (`enc_delta`, the two-stage box-decode MLP
+        output) is **still corrupted** even with both of those protected.
+      - `tgt` (the learned content query, independent of `memory`) matches
+        exactly throughout, confirming the corruption is specific to the
+        `memory`-derived computation chain, not a general graph problem.
+      This strongly points to a **ggml graph-allocator buffer-reuse bug**
+      triggered specifically by this graph's size/topology (not a port
+      logic bug — every architecture piece it depends on, checkpoint-
+      verified independently, is correct) — but fully resolving it needs
+      either finding every affected intermediate tensor (`ggml_set_output`
+      whack-a-mole) or a deeper look at `ggml-alloc.c`'s buffer-lifetime
+      analysis for graphs this large. Not resolved this session;
+      `test_segmentation_xlarge.cpp`/GGUF conversion scaffolding is
+      committed and ready to re-validate once fixed. Seg2XLarge (even
+      larger, 768 res) is likely to hit the same issue and should wait for
+      this to be root-caused first.
 - [ ] `RFDETRSegPreviewConfig` and other non-Nano segmentation configs
       unvalidated
 
