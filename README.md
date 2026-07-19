@@ -15,18 +15,35 @@ architecture notes this port is working from, and
 
 ## Status
 
-Scaffolding stage — no validated milestones yet. Plan:
+| Milestone | Test | Result |
+|---|---|---|
+| DINOv2-windowed-attention backbone (RFDETRNano, 4 taps) | `test_backbone` | ≤2.5e-4 (gate 5e-2) |
 
-1. Backbone: DINOv2-with-windowed-attention encoder (Small/Base/Large configs)
+Plan:
+
+1. ~~Backbone: DINOv2-with-windowed-attention encoder~~ — RFDETRNano
+   validated; Small/Base/Large configs (and position-embedding bicubic
+   interpolation, needed only for patch_size==14 variants at a non-native
+   resolution) still to do.
 2. Detection head: Deformable-DETR-style decoder (`lwdetr`/`transformer`)
 3. Instance segmentation head (dot-product mask head)
 4. Keypoint head (RFDETRKeypointPreview)
 5. Finetuning/training (C++/ggml training loop) — phase 2, after 1-4 are
    validated for inference
 
-Each milestone will be validated against a PyTorch reference
+Each milestone is validated against a PyTorch reference
 (`gen_reference/*.py` via `uv run` CPU torch → `tests/test_*.cpp` max-abs-diff
-gate), following the sibling ports' pattern.
+gate), following the sibling ports' pattern:
+
+```sh
+cmake -B build -G Ninja && cmake --build build --target test_backbone
+uv run --with torch --with numpy --with gguf scripts/convert_dinov2_to_gguf.py models/rf-detr-nano.pth models/rf-detr-nano-backbone.gguf
+uv run --with torch --with numpy --with rfdetr gen_reference/gen_reference_backbone.py models/rf-detr-nano.pth gen_reference/reference_backbone_nano.bin
+./build/test_backbone.exe
+```
+
+Checkpoints download from `https://storage.googleapis.com/rfdetr/*` (see
+`docs/decisions/backbone-windowing.md`); `models/` is gitignored.
 
 ## Weights
 
