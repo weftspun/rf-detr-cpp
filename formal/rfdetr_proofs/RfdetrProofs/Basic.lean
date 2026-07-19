@@ -142,6 +142,105 @@ theorem interArea_le_areaB {x1a x2a x1b x2b y1a y2a y1b y2b : ℝ}
   unfold interArea
   exact mul_le_mul (interW_le_right hxb) (interH_le_right hyb) (relu_nonneg _) (by linarith)
 
+/-- `encW`'s exact value (no `relu` clamping, since the raw expression is
+always `≥ 0` for valid boxes): rewrites `max x2a x2b - min x1a x1b` in terms
+of the two box widths and the (possibly-negative) intersection extent
+`min x2a x2b - max x1a x1b`, via the algebraic identity
+`max u v + min u v = u + v` applied to both `{x2a,x2b}` and `{x1a,x1b}`. -/
+theorem encW_eq {x1a x2a x1b x2b : ℝ} (hxa : x1a ≤ x2a) (hxb : x1b ≤ x2b) :
+    encW x1a x2a x1b x2b =
+      (x2a - x1a) + (x2b - x1b) - (min x2a x2b - max x1a x1b) := by
+  unfold encW relu
+  simp only [min_def, max_def]
+  split_ifs <;> linarith
+
+theorem encH_eq {y1a y2a y1b y2b : ℝ} (hya : y1a ≤ y2a) (hyb : y1b ≤ y2b) :
+    encH y1a y2a y1b y2b =
+      (y2a - y1a) + (y2b - y1b) - (min y2a y2b - max y1a y1b) := by
+  unfold encH relu
+  simp only [min_def, max_def]
+  split_ifs <;> linarith
+
+/-- **`union ≤ enclose`**: the union of two boxes' areas never exceeds the
+smallest axis-aligned box enclosing both -- proved directly from the box
+coordinates via a case split on whether the boxes overlap along each axis
+(not cited as an external fact; see the file-level note above for why this
+matters). Each of the four cases (overlap in both axes / one axis / neither)
+reduces to an algebraic identity once `encW_eq`/`encH_eq` and
+`interW_le_left`/`interW_le_right`/`interH_le_left`/`interH_le_right`
+(the intersection never exceeds either box on either axis) are in scope --
+`nlinarith` closes all four given the right product hints. -/
+theorem union_le_enclose {x1a x2a x1b x2b y1a y2a y1b y2b : ℝ}
+    (hxa : x1a ≤ x2a) (hya : y1a ≤ y2a) (hxb : x1b ≤ x2b) (hyb : y1b ≤ y2b) :
+    (x2a - x1a) * (y2a - y1a) + (x2b - x1b) * (y2b - y1b)
+      - interArea x1a x2a x1b x2b y1a y2a y1b y2b
+    ≤ encArea x1a x2a x1b x2b y1a y2a y1b y2b := by
+  have hEW := encW_eq hxa hxb
+  have hEH := encH_eq hya hyb
+  have hIWa : interW x1a x2a x1b x2b ≤ x2a - x1a := interW_le_left hxa
+  have hIWb : interW x1a x2a x1b x2b ≤ x2b - x1b := interW_le_right hxb
+  have hIHa : interH y1a y2a y1b y2b ≤ y2a - y1a := interH_le_left hya
+  have hIHb : interH y1a y2a y1b y2b ≤ y2b - y1b := interH_le_right hyb
+  have hIW0 : 0 ≤ interW x1a x2a x1b x2b := relu_nonneg _
+  have hIH0 : 0 ≤ interH y1a y2a y1b y2b := relu_nonneg _
+  have hHa0 : (0:ℝ) ≤ y2a - y1a := by linarith
+  have hHb0 : (0:ℝ) ≤ y2b - y1b := by linarith
+  have hWa0 : (0:ℝ) ≤ x2a - x1a := by linarith
+  have hWb0 : (0:ℝ) ≤ x2b - x1b := by linarith
+  unfold interArea encArea
+  rw [hEW, hEH]
+  -- `interW`/`interH` are `relu` of the signed extents; case split on sign.
+  rcases le_total 0 (min x2a x2b - max x1a x1b) with hSx | hSx <;>
+    rcases le_total 0 (min y2a y2b - max y1a y1b) with hSy | hSy
+  · -- both axes overlap: interW/interH equal the signed extents exactly.
+    -- Writing da := Wa-Sx ≥ 0, db := Wb-Sx ≥ 0, ea := Ha-Sy ≥ 0, eb := Hb-Sy ≥ 0
+    -- (all ≥ 0 since the intersection never exceeds either box), the
+    -- difference `encW*encH - (Wa*Ha+Wb*Hb-Sx*Sy)` expands EXACTLY to
+    -- `da*eb + db*ea ≥ 0` -- verified by hand, `nlinarith` just checks it.
+    have hIWeq : interW x1a x2a x1b x2b = min x2a x2b - max x1a x1b := max_eq_left hSx
+    have hIHeq : interH y1a y2a y1b y2b = min y2a y2b - max y1a y1b := max_eq_left hSy
+    rw [hIWeq] at hIWa hIWb
+    rw [hIHeq] at hIHa hIHb
+    rw [hIWeq, hIHeq]
+    nlinarith [mul_nonneg (sub_nonneg.mpr hIWa) (sub_nonneg.mpr hIHb),
+               mul_nonneg (sub_nonneg.mpr hIWb) (sub_nonneg.mpr hIHa)]
+  · -- x overlaps, y doesn't: interH = 0, so `uni = Wa*Ha + Wb*Hb`. Verified:
+    -- `encW*encH - uni = (Wa-Sx)*Hb + (Wb-Sx)*Ha + (Wa+Wb-Sx)*(-Sy) ≥ 0`,
+    -- all three terms nonneg (`Sx ≤ Wa,Wb` from the intersection bound,
+    -- `Sy ≤ 0` this branch, `Ha,Hb ≥ 0` valid boxes).
+    have hIHeq : interH y1a y2a y1b y2b = 0 := max_eq_right hSy
+    have hIWeq : interW x1a x2a x1b x2b = min x2a x2b - max x1a x1b := max_eq_left hSx
+    rw [hIWeq] at hIWa hIWb
+    rw [hIHeq]
+    nlinarith [mul_nonneg (sub_nonneg.mpr hIWa) hHb0,
+               mul_nonneg (sub_nonneg.mpr hIWb) hHa0,
+               mul_nonneg
+                 (by linarith : (0:ℝ) ≤ (x2a - x1a) + (x2b - x1b)
+                                          - (min x2a x2b - max x1a x1b))
+                 (by linarith : (0:ℝ) ≤ -(min y2a y2b - max y1a y1b))]
+  · -- y overlaps, x doesn't: interW = 0, symmetric to the previous case.
+    have hIWeq : interW x1a x2a x1b x2b = 0 := max_eq_right hSx
+    have hIHeq : interH y1a y2a y1b y2b = min y2a y2b - max y1a y1b := max_eq_left hSy
+    rw [hIHeq] at hIHa hIHb
+    rw [hIWeq]
+    nlinarith [mul_nonneg (sub_nonneg.mpr hIHa) hWb0,
+               mul_nonneg (sub_nonneg.mpr hIHb) hWa0,
+               mul_nonneg
+                 (by linarith : (0:ℝ) ≤ (y2a - y1a) + (y2b - y1b)
+                                          - (min y2a y2b - max y1a y1b))
+                 (by linarith : (0:ℝ) ≤ -(min x2a x2b - max x1a x1b))]
+  · -- neither axis overlaps: interW = interH = 0, `uni = Wa*Ha+Wb*Hb`, and
+    -- `encW ≥ Wa+Wb`, `encH ≥ Ha+Hb` (both slack terms are -Sx,-Sy ≥ 0),
+    -- so `encW*encH ≥ (Wa+Wb)*(Ha+Hb) ≥ Wa*Ha+Wb*Hb`.
+    have hIWeq : interW x1a x2a x1b x2b = 0 := max_eq_right hSx
+    have hIHeq : interH y1a y2a y1b y2b = 0 := max_eq_right hSy
+    rw [hIWeq, hIHeq]
+    nlinarith [mul_nonneg hWa0 hHb0, mul_nonneg hWb0 hHa0,
+               mul_nonneg (by linarith : (0:ℝ) ≤ -(min x2a x2b - max x1a x1b))
+                 (by linarith : (0:ℝ) ≤ (y2a - y1a) + (y2b - y1b) - (min y2a y2b - max y1a y1b)),
+               mul_nonneg (by linarith : (0:ℝ) ≤ (x2a - x1a) + (x2b - x1b))
+                 (by linarith : (0:ℝ) ≤ -(min y2a y2b - max y1a y1b))]
+
 /-- `0 ≤ IoU ≤ 1`, exactly matching `detection_loss`'s
 `iou = inter / (area1 + area2 - inter)` (`src/loss.cpp:264-265`, epsilon
 dropped, see the file-level note above). -/
@@ -167,13 +266,11 @@ theorem iou_bounds {x1a x2a x1b x2b y1a y2a y1b y2b : ℝ}
 
 /-- **`-1 ≤ GIoU ≤ 1`** (`src/loss.cpp:273`: `giou := iou - (enclose - union)/enclose`).
 Given `0 ≤ IoU ≤ 1`, `union ≥ 0`, `union ≤ enclose`, and `enclose > 0`, GIoU is
-bounded in `[-1, 1]`. `union ≤ enclose` (the smallest axis-aligned box
-enclosing two boxes has area at least their union's, since both input boxes,
-hence their set union, are literally subsets of the enclosing box) is the
-well-known containment fact underlying Theorem 1 of the original GIoU paper
-(Rezatofighi et al., CVPR 2019); it's taken as a hypothesis here rather than
-re-derived from 2D measure theory, which is out of scope for this port's
-verification. -/
+bounded in `[-1, 1]`. Stated abstractly here over bare reals (`union ≤ enclose`
+taken as a hypothesis); `giou_bounds_full` below discharges that hypothesis
+via `union_le_enclose`, proved directly from the box coordinates rather than
+cited, so the composed result ends up unconditional (given only valid
+boxes). -/
 theorem giou_bounds (iou uni enc : ℝ)
     (hiou0 : 0 ≤ iou) (hiou1 : iou ≤ 1)
     (huni_nonneg : 0 ≤ uni) (huni_le_enc : uni ≤ enc) (henc_pos : 0 < enc) :
@@ -182,20 +279,18 @@ theorem giou_bounds (iou uni enc : ℝ)
   have hfrac1 : (enc - uni) / enc ≤ 1 := by rw [div_le_one henc_pos]; linarith
   exact ⟨by linarith, by linarith⟩
 
-/-- Fully composed version, wired directly to the eight box coordinates
-exactly as `detection_loss` computes them (`src/loss.cpp:242-274`) rather
-than abstract `iou`/`uni`/`enc` reals. The ONLY hypothesis not derived from
-the `elementwise_max`/`min`+`relu` construction itself is `union ≤ enclose`
-(cited from the GIoU paper, see `giou_bounds`'s docstring); everything else
-(`0 ≤ IoU ≤ 1`, `union ≥ 0`, `union > 0`) follows from
-`interArea_le_areaA`/`interArea_le_areaB` above. -/
+/-- **Fully composed and unconditional** (relative to box validity): wired
+directly to the eight box coordinates exactly as `detection_loss` computes
+them (`src/loss.cpp:242-274`) rather than abstract `iou`/`uni`/`enc` reals.
+Unlike an earlier version of this theorem, `union ≤ enclose` is no longer a
+hypothesis here -- `union_le_enclose` proves it directly from the box
+coordinates, so this theorem's ONLY hypotheses are box validity
+(`x1 ≤ x2`, `y1 ≤ y2` for each box) and `union > 0` (needed only to divide by
+it for IoU; degenerate zero-area boxes are out of scope). -/
 theorem giou_bounds_full {x1a x2a x1b x2b y1a y2a y1b y2b : ℝ}
     (hxa : x1a ≤ x2a) (hya : y1a ≤ y2a) (hxb : x1b ≤ x2b) (hyb : y1b ≤ y2b)
     (huni_pos : 0 < (x2a - x1a) * (y2a - y1a) + (x2b - x1b) * (y2b - y1b)
-                    - interArea x1a x2a x1b x2b y1a y2a y1b y2b)
-    (huni_le_enc : (x2a - x1a) * (y2a - y1a) + (x2b - x1b) * (y2b - y1b)
-                    - interArea x1a x2a x1b x2b y1a y2a y1b y2b
-                    ≤ encArea x1a x2a x1b x2b y1a y2a y1b y2b) :
+                    - interArea x1a x2a x1b x2b y1a y2a y1b y2b) :
     -1 ≤ interArea x1a x2a x1b x2b y1a y2a y1b y2b /
            ((x2a - x1a) * (y2a - y1a) + (x2b - x1b) * (y2b - y1b)
              - interArea x1a x2a x1b x2b y1a y2a y1b y2b)
@@ -211,6 +306,7 @@ theorem giou_bounds_full {x1a x2a x1b x2b y1a y2a y1b y2b : ℝ}
                  - interArea x1a x2a x1b x2b y1a y2a y1b y2b))
            / encArea x1a x2a x1b x2b y1a y2a y1b y2b ≤ 1 := by
   have hbounds := iou_bounds hxa hya hxb hyb huni_pos
+  have huni_le_enc := union_le_enclose hxa hya hxb hyb
   have huni_nonneg :
       0 ≤ (x2a - x1a) * (y2a - y1a) + (x2b - x1b) * (y2b - y1b)
             - interArea x1a x2a x1b x2b y1a y2a y1b y2b := by

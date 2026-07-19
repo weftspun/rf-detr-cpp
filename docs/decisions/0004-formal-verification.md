@@ -49,21 +49,36 @@ actually ships:
   why a per-element clamp doesn't automatically bound a sum over many
   elements, but this ONE term (GIoU) is bounded regardless of scale.
 
-One hypothesis is taken as a cited external fact rather than re-derived:
-`union ≤ enclose` (the smallest axis-aligned box enclosing two boxes has area
-at least their set union's, since both boxes are literal subsets of the
-enclosing box). This is 2D measure-theoretic (`A, B ⊆ C ⟹ vol(A∪B) ≤ vol(C)`)
-and isn't algebraically reducible to the 1D interval facts the rest of the
-proof uses; formalizing it in Mathlib would need `MeasureTheory.volume` over
-`ℝ × ℝ` and product-measure lemmas, out of scope for what this exercise is
-for. It's cited to Theorem 1 of the original GIoU paper (Rezatofighi et al.,
-CVPR 2019), which proves the same fact via the same set-containment
-argument -- not a novel or unverified claim, just not re-derived here.
+**Update (same session, second pass):** `union ≤ enclose` -- initially cited
+as an external fact below (2D measure-theoretic: the smallest axis-aligned
+box enclosing two boxes has area at least their union's, since both boxes
+are literal subsets of the enclosing box) -- turned out to be provable
+*algebraically*, without measure theory, via `union_le_enclose`: case-split
+on whether the two boxes overlap along each axis (4 cases), and in each case
+the target inequality reduces to a sum of explicit nonnegative products
+(e.g. the "both axes overlap" case reduces to `da*eb + db*ea ≥ 0` where
+`da := Wa-Sx ≥ 0` etc., verified by hand then checked mechanically by
+`nlinarith` given those exact product terms as hints). `giou_bounds_full` no
+longer takes `union ≤ enclose` as a hypothesis -- it's now genuinely
+**unconditional relative to box validity alone** (`x1 ≤ x2`, `y1 ≤ y2` for
+each box, plus `union > 0` to divide by). The paragraph below describing the
+citation is kept for the record of what was tried first.
 
-All twelve theorems in `RfdetrProofs/Basic.lean` compile with **zero
-`sorry`s and zero `axiom`s** (grep-verified) -- everything except the one
-cited hypothesis above is proven from Mathlib's real-number order-lattice
-lemmas (`max_eq_left`, `min_def`, `mul_le_mul`, etc.) plus `linarith`.
+~~One hypothesis is taken as a cited external fact rather than re-derived:
+`union ≤ enclose`~~ (superseded above) ~~... This is 2D measure-theoretic
+(`A, B ⊆ C ⟹ vol(A∪B) ≤ vol(C)`) and isn't algebraically reducible to the 1D
+interval facts the rest of the proof uses; formalizing it in Mathlib would
+need `MeasureTheory.volume` over `ℝ × ℝ` and product-measure lemmas, out of
+scope for what this exercise is for.~~ The 2D measure-theoretic framing was
+the wrong lens -- the fact IS algebraically reducible, just needed the right
+case split (whether the boxes overlap per-axis) rather than a general
+subset-implies-smaller-measure argument.
+
+All fourteen theorems in `RfdetrProofs/Basic.lean` compile with **zero
+`sorry`s and zero `axiom`s** (grep-verified) -- every one, including
+`union_le_enclose`, is proven from Mathlib's real-number order-lattice
+lemmas (`max_eq_left`, `min_def`, `mul_le_mul`, etc.) plus `linarith`/
+`nlinarith`. No fact used in this file is cited rather than proven.
 
 ## What this did and didn't find
 
@@ -79,13 +94,14 @@ certainty stronger than a numeric spot-check could provide.
 
 ## Why not extend this further right now
 
-Formalizing the `union ≤ enclose` measure-theoretic fact, or verifying the
-Hungarian-matching algorithm's optimality (`src/loss.cpp`'s
-`kuhn_munkres`), would be the natural next steps if this direction is worth
-investing in further, but both are substantially larger undertakings (real
-2D measure theory; a nontrivial graph/combinatorial-optimization proof) than
-the "speedrun" pace the rest of this session's loop has been operating at.
-Documented here as a natural follow-up, not attempted this pass.
+Verifying the Hungarian-matching algorithm's optimality (`src/loss.cpp`'s
+`kuhn_munkres`) would be the natural next step if this direction is worth
+investing in further, but it's a substantially larger undertaking (a
+nontrivial graph/combinatorial-optimization proof, likely needing LP
+duality or augmenting-path-optimality arguments not just algebraic
+case-splitting) than the "speedrun" pace this session's loop has been
+operating at. Documented here as a natural follow-up, not attempted this
+pass.
 
 ## Consequences
 

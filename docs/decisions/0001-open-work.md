@@ -333,12 +333,17 @@ variants for each (see their sections above), then phase-2 training.
 - [x] Formal verification (Lean4/Mathlib) of the backward-pass primitive
       tricks (`clamp_diff`, `elementwise_max`/`min`, GIoU boundedness) —
       `formal/rfdetr_proofs/`, see
-      `docs/decisions/0004-formal-verification.md`. Twelve theorems, zero
-      `sorry`s/`axiom`s (one cited external fact: `union ≤ enclose`, from
-      the GIoU paper). No bug found — rules out "one of these identities is
-      subtly wrong" as a contributing hypothesis for the still-open
-      SegXLarge/mask-head items above, same spirit as the blanket-
-      `ggml_set_output` experiment that ruled out buffer reuse.
+      `docs/decisions/0004-formal-verification.md`. Fourteen theorems, zero
+      `sorry`s/`axiom`s — including `union_le_enclose` (initially cited from
+      the GIoU paper as an external fact, then proved algebraically via a
+      per-axis overlap case split, no measure theory needed after all), so
+      the full GIoU-boundedness chain is unconditional given only valid
+      boxes. No bug found — rules out "one of these identities is subtly
+      wrong" as a contributing hypothesis for the still-open SegXLarge/
+      mask-head items above, same spirit as the blanket-`ggml_set_output`
+      experiment that ruled out buffer reuse. Natural follow-up (not
+      attempted): formalize `kuhn_munkres`'s (Hungarian matching)
+      optimality — substantially larger, deferred.
 
 ### Documentation / process
 
