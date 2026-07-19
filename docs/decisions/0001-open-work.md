@@ -52,16 +52,21 @@ what was open and when it closed.
       `num_windows=2`, patch_size=16, no bicubic interpolation needed), just
       resolution 512 (grid 32) and `dec_layers=3` — pure config-value
       extension, no code changes, confirming the pattern generalizes.
+- [x] RFDETRMedium validated end-to-end (`test_decoder_medium`: boxes
+      1.8e-3, logits 2.2e-3) — checkpoint-verified against
+      `medium_coco/checkpoint_best_regular.pth` (MD5 confirmed). Same
+      pattern as Small: resolution 576 (grid 36), `dec_layers=4`, no code
+      changes.
 - [ ] There is no detection XL/2XL variant upstream — only Nano, Small,
       Medium, Base, Large, and LargeDeprecated exist for detection (XL/2XL
       only exist for segmentation). Remaining unvalidated detection sizes:
-      Medium (patch16, res576, dec_layers4 — same pattern as Small, should
-      be a similarly pure config extension), Large (patch16, res704,
-      dec_layers4), LargeDeprecated (patch14 like Base, but **768-wide
-      backbone AND `projector_scale=['P3','P5']` → `num_feature_levels=2`**
-      — the one variant needing real new code, since every other variant
-      validated so far is single-feature-level; deformable cross-attention's
-      `n_levels` dimension is currently unexercised beyond 1).
+      Large (patch16, res704, dec_layers4 — same pattern as Small/Medium,
+      should be a pure config extension), LargeDeprecated (patch14 like
+      Base, but **768-wide backbone AND `projector_scale=['P3','P5']` →
+      `num_feature_levels=2`** — the one variant needing real new code,
+      since every other variant validated so far is single-feature-level;
+      deformable cross-attention's `n_levels` dimension is currently
+      unexercised beyond 1).
 - [ ] Multi-image batching (N>1) not supported — `backbone.cpp`'s
       windowed/global merge-reshape trick assumes a single image per graph
 
