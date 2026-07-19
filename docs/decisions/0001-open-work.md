@@ -39,9 +39,12 @@ what was open and when it closed.
       boxes 1.1e-3, logits 7.2e-4) — 3 decoder layers (vs. Nano-family's
       2/4), confirms `src/decoder.cpp` generalizes cleanly to a third
       `dec_layers` value with no code changes
-- [ ] `qkv_bias` (config default `True`) never explicitly checked for
-      presence against a real checkpoint key — low risk, `linear()`
-      handles bias-optional generically either way, but not confirmed
+- [x] `qkv_bias` (config default `True`) checkpoint-verified: scanned the
+      raw GGUF tensor-name strings for `encoder.layer.0.attention.attention.
+      {query,key,value}.bias` in both `rf-detr-nano-backbone.gguf` and
+      `rf-detr-base-backbone.gguf` — present in both. `linear()` already
+      loads and applies any `.bias` tensor it finds (`m.has(pre+".bias")`),
+      so this was a verification-only task, no code change needed.
 - [ ] Other backbone/decoder size variants (Small/Large/XL/2XL, and
       Large-deprecated which shares RFDETRBase's patch_size==14 path)
       unvalidated — only Nano-family configs + RFDETRBase's backbone
