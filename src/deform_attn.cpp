@@ -32,7 +32,27 @@ ggml_tensor * ms_deform_attn(Model & m, ggml_tensor * query, ggml_tensor * value
     ggml_tensor * ref_cxcy = ggml_cont(ctx, ggml_view_2d(ctx, ref_points, 2, n_query, ref_points->nb[1], 0));
     ggml_tensor * ref_wh   = ggml_cont(ctx, ggml_view_2d(ctx, ref_points, 2, n_query, ref_points->nb[1], 2 * sizeof(float)));
 
-    ggml_tensor * out = nullptr;
+    // Per-head outputs are assembled via ggml_set (writing each head's
+    // disjoint head_dim-wide channel slice into a scratch (d_model,n_query)
+    // tensor) instead of ggml_concat -- CONCAT has no backward case at all
+    // (same class of gap as ggml_norm/ggml_sigmoid/CLAMP-before-this-fix;
+    // see docs/decisions/0003-training.md), which aborted the process the
+    // moment a real training step needed a gradient through this op. `out`
+    // (the scratch base) never has its OWN data read before every one of
+    // its head_dim-wide slices has been overwritten by a real head's
+    // output -- one `ggml_set` per head, `n_heads` total, fully covering
+    // all `d_model` channels -- so its uninitialized initial content never
+    // matters. Forward-identical to the CONCAT version (verified: all
+    // existing decoder/segmentation/keypoint inference tests still pass
+    // with zero regression).
+    ggml_tensor * out = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_model, n_query);
+    ggml_set_input(out);
+    // Also protect from the graph allocator's buffer-reuse -- the same
+    // leaf-tensor lesson as decoder.cpp's `output_proposals`/`valid_mask`
+    // (docs/decisions/0001-open-work.md's SegXLarge writeup): a leaf
+    // tensor is invisible to a "protect every computed node" sweep and
+    // its buffer can otherwise be handed to a later op's output.
+    ggml_set_output(out);
     for (int h = 0; h < n_heads; h++) {
         ggml_tensor * value_h = ggml_cont(ctx, ggml_view_2d(ctx, value4, head_dim, gw * gh,
                                                             value4->nb[2], (size_t) h * value4->nb[1])); // (head_dim, gw*gh)
@@ -87,7 +107,7 @@ ggml_tensor * ms_deform_attn(Model & m, ggml_tensor * query, ggml_tensor * value
             ggml_tensor * weighted = ggml_mul(ctx, sample_sum, aw_hp);
             head_out = head_out ? ggml_add(ctx, head_out, weighted) : weighted;
         }
-        out = out ? ggml_concat(ctx, out, head_out, 0) : head_out; // concat heads along channel dim
+        out = ggml_set_2d(ctx, out, head_out, out->nb[1], (size_t) h * head_dim * sizeof(float));
     }
 
     out = ggml_reshape_3d(ctx, out, d_model, n_query, 1);
@@ -120,7 +140,17 @@ ggml_tensor * ms_deform_attn_multilevel(Model & m, ggml_tensor * query, ggml_ten
     ggml_tensor * ref_cxcy = ggml_cont(ctx, ggml_view_2d(ctx, ref_points, 2, n_query, ref_points->nb[1], 0));
     ggml_tensor * ref_wh   = ggml_cont(ctx, ggml_view_2d(ctx, ref_points, 2, n_query, ref_points->nb[1], 2 * sizeof(float)));
 
-    ggml_tensor * out = nullptr;
+    // Per-head outputs assembled via ggml_set, not ggml_concat -- see
+    // ms_deform_attn's (single-level) matching comment above for the full
+    // explanation (CONCAT has no backward case).
+    ggml_tensor * out = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d_model, n_query);
+    ggml_set_input(out);
+    // Also protect from the graph allocator's buffer-reuse -- the same
+    // leaf-tensor lesson as decoder.cpp's `output_proposals`/`valid_mask`
+    // (docs/decisions/0001-open-work.md's SegXLarge writeup): a leaf
+    // tensor is invisible to a "protect every computed node" sweep and
+    // its buffer can otherwise be handed to a later op's output.
+    ggml_set_output(out);
     for (int h = 0; h < n_heads; h++) {
         ggml_tensor * head_out = nullptr;
         int64_t level_off = 0; // token offset of this level within value4's total_tokens axis
@@ -179,7 +209,7 @@ ggml_tensor * ms_deform_attn_multilevel(Model & m, ggml_tensor * query, ggml_ten
             }
             level_off += (int64_t) gw * gh;
         }
-        out = out ? ggml_concat(ctx, out, head_out, 0) : head_out; // concat heads along channel dim
+        out = ggml_set_2d(ctx, out, head_out, out->nb[1], (size_t) h * head_dim * sizeof(float));
     }
 
     out = ggml_reshape_3d(ctx, out, d_model, n_query, 1);

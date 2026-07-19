@@ -427,9 +427,24 @@ variants for each (see their sections above), then phase-2 training.
       forward+backward+optimizer pass, two separate fresh graphs) doesn't
       fit that wrapper's assumptions cleanly, and the manual loop already
       works correctly.
-- [ ] (Deferred, only if scope widens later) Resolve deformable-attention's
-      backward (Finding 3) if the decoder becomes trainable; wire
-      `layer_norm_affine_diff` into the decoder's LayerNorms at that point.
+- [x] Deformable-attention backward (Finding 3) — RESOLVED (scope widened:
+      user requested full decoder finetuning, not just the detection
+      heads). No custom ggml op needed — `floor`/`clamp` just needed
+      backward CASES added to `ggml_compute_backward`'s existing dispatch
+      switch in `third_party/ggml/src/ggml.c` (both follow exact patterns
+      already present there: `floor` is a "noop"/zero-gradient case
+      identical to `SGN`/`STEP`'s existing treatment; `clamp` is a real
+      gate gradient matching `RELU`'s shape). Also fixed a third gap found
+      during validation: `ms_deform_attn`'s per-head output assembly used
+      `ggml_concat` (no backward case), switched to the same `ggml_set`-
+      based pattern already used for `bbox_reparam_decode_diff`.
+      `tests/test_deform_attn_backward.cpp`: finite-differences the real
+      gradient w.r.t. `query` and `ref_points`, matches to ~1e-4 relative
+      error. See `docs/decisions/0003-training.md`'s Finding 3 for the
+      full writeup, including a separate genuine ggml bug found (context
+      teardown segfaults specifically for the `ref_points`-trainable
+      case, despite correct gradient values already read out beforehand)
+      and its leak-the-context workaround.
 - [x] Formal verification (Lean4/Mathlib) of the backward-pass primitive
       tricks (`clamp_diff`, `elementwise_max`/`min`, GIoU boundedness) —
       `formal/rfdetr_proofs/`, see

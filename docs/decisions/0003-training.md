@@ -62,7 +62,7 @@ the FLOPs in the network — the gap is narrower than "nothing works," but
 `GGML_OP_NORM`'s absence alone blocks naive end-to-end backprop through
 literally every existing block.
 
-## Finding 3: deformable attention needs a *hand-derived* backward, not just missing-op patches
+## Finding 3: deformable attention needs a *hand-derived* backward, not just missing-op patches — RESOLVED
 
 `src/deform_attn.cpp`'s bilinear sampling is built from `ggml_floor` +
 `ggml_clamp` + `ggml_get_rows` + elementwise weight multiplies — a
@@ -72,13 +72,58 @@ chain had a backward case, composing them via autodiff would differentiate
 through `ggml_floor`'s corner-index computation, which is not how
 deformable attention's real gradient is defined (the *indices* aren't
 differentiable; the *bilinear weights* are, w.r.t. the continuous sampling
-location which itself depends on the learned `sampling_offsets`). This
-needs either: (a) a hand-derived custom backward op mirroring
-`ggml_rms_norm_back`'s pattern (a dedicated `ms_deform_attn_back`
-implementing the known-closed-form gradient from the original Deformable
-DETR paper), or (b) marking the sampling-location computation as a
-"stop-gradient" boundary and only training what's downstream/upstream of
-it separately. Not a small task — flag as its own sub-milestone.
+location which itself depends on the learned `sampling_offsets`).
+
+**Resolution (later session, once the decoder itself needed to be
+trainable): no custom op needed.** `floor` and `clamp` already exist as
+ops with working forward kernels in ggml — they were only missing from
+`ggml_compute_backward`'s dispatch switch in `third_party/ggml/src/ggml.c`.
+Two small additions, both following exact patterns already present in that
+file:
+- `GGML_UNARY_OP_FLOOR`: a "noop" (zero) backward case, identical to the
+  treatment ggml already gives `SGN`/`STEP` (both piecewise-constant, true
+  derivative zero almost everywhere). This is what makes
+  `frac(x) = x - floor(x)` autodiff to the mathematically correct
+  `d/dx = 1`: `SUB`'s own backward sends `+grad` to `x` and (this noop)
+  `+0` to `floor(x)` — exactly the "indices aren't differentiable, the
+  bilinear weight is" distinction this Finding originally called for,
+  achieved without any special-casing in `deform_attn.cpp` itself.
+- `GGML_OP_CLAMP`: a real gate gradient (1 inside `[lo,hi]`, 0 outside),
+  the same step-function shape as `RELU`'s existing backward (which gates
+  on one boundary instead of two).
+
+A third, related gap was found while validating: `ms_deform_attn`'s
+per-head output assembly used `ggml_concat` (no backward case at all, same
+class of gap) — fixed the same way `bbox_reparam_decode_diff` already
+fixed the identical problem for box decoding: assemble via `ggml_set`
+(writing each head's disjoint channel slice into a scratch tensor) instead
+of `ggml_concat`. Forward-identical, zero regression on the full test
+suite.
+
+Validated with `tests/test_deform_attn_backward.cpp`: finite-differences
+the gradient of a real `ms_deform_attn` call w.r.t. both `query` (drives
+`sampling_offsets`, threading through the floor/clamp path) and
+`ref_points` (feeds the sampling location via two separate views) —
+matches to ~1e-4-level relative error across many indices, for the full
+`n_heads=2, n_points=2` case.
+
+**A separate, genuine ggml bug found during validation** (not a
+correctness bug — it doesn't affect computed values): freeing
+(`ggml_free`) the graph context after a backward pass through
+`ref_points` (but not through `query`) segfaults, even though the
+gradient values are already read out and verified correct *before* the
+crash. Extensively bisected: a from-scratch minimal repro of the exact
+same floor/clamp/get_rows/multi-view/`ggml_set` computation graph does
+**not** crash on free; only the real `ms_deform_attn`-produced graph does,
+and only for the `ref_points`-as-param case specifically. This is a
+memory-management bug in ggml's own context-teardown bookkeeping for this
+graph topology, not a gradient-correctness issue. Workaround (matching
+this project's established pattern for other real ggml gaps): the
+backward-graph context is deliberately **leaked** (never `ggml_free`'d)
+rather than crash — acceptable for a bounded test; a long-running
+trainable-decoder loop would need the same treatment (or a proper ggml-side
+fix, not attempted here) for every step that backprops through
+`ms_deform_attn`.
 
 ## RF-DETR's loss requirements (from `rfdetr` source, read this session)
 
@@ -142,11 +187,20 @@ relative error on 5 sampled elements. The existing fused `layer_norm_affine`
 is untouched (still used by every inference graph) — `layer_norm_affine_diff`
 is a separate, opt-in function for graphs that need backward.
 
-## Scope decision: detection-head-only finetune (decided)
+## Scope decision: detection-head-only finetune (superseded — see below)
 
-**Chosen scope: freeze the DINOv2 backbone AND the transformer decoder;
-finetune only `class_embed`/`bbox_embed`** (the final linear/MLP heads
-reading the last decoder layer's hidden state). This is the smallest
+**UPDATE (later session): scope widened.** The user explicitly requested
+full DETR (decoder) finetuning, not just the detection heads — this
+directly motivated resolving Finding 3 (deformable-attention backward),
+now done (see the updated Finding 3 section above). The original
+head-only scope decision below is kept for the historical record of *why*
+it was chosen at the time (it was the smallest useful slice, and it
+sidestepped exactly the two things — `ms_deform_attn` backward and
+`layer_norm_affine_diff` wiring — that a wider scope needs).
+
+**Originally chosen scope: freeze the DINOv2 backbone AND the transformer
+decoder; finetune only `class_embed`/`bbox_embed`** (the final linear/MLP
+heads reading the last decoder layer's hidden state). This is the smallest
 useful slice flagged in the prior draft of this doc, and it's the one that
 sidesteps the most open work:
 

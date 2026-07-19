@@ -6716,6 +6716,20 @@ static void ggml_compute_backward(
                 ggml_add_or_set(ctx, cgraph, isrc0, ggml_div(ctx, grad, src0));
             }
         } break;
+        case GGML_OP_CLAMP: {
+            if (src0_needs_grads) {
+                // clamp(x,lo,hi)'s true gradient is 1 where lo<x<hi, 0
+                // outside -- a "double-sided step" gate, the same
+                // step-function shape as RELU's backward above (which
+                // gates on a single boundary instead of two).
+                const float lo = ggml_get_op_params_f32(tensor, 0);
+                const float hi = ggml_get_op_params_f32(tensor, 1);
+                struct ggml_tensor * above_lo = ggml_step(ctx, ggml_scale_bias(ctx, src0, 1.0f, -lo));
+                struct ggml_tensor * below_hi = ggml_step(ctx, ggml_scale_bias(ctx, src0, -1.0f, hi));
+                struct ggml_tensor * gate = ggml_mul(ctx, above_lo, below_hi);
+                ggml_add_or_set(ctx, cgraph, isrc0, ggml_mul(ctx, gate, grad));
+            }
+        } break;
         case GGML_OP_SIN: {
             if (src0_needs_grads) {
                 ggml_add_or_set(ctx, cgraph, isrc0, ggml_mul(ctx, grad, ggml_cos(ctx, src0)));
@@ -7052,6 +7066,19 @@ static void ggml_compute_backward(
                         ggml_add_or_set(ctx, cgraph, isrc0, ggml_mul(ctx, grad, ggml_sigmoid(ctx, src0)));
                     }
                 } break;
+                case GGML_UNARY_OP_FLOOR: {
+                    // noop: floor's true derivative is 0 almost everywhere
+                    // (piecewise constant, like SGN/STEP above) -- letting
+                    // this branch contribute nothing to src0's gradient is
+                    // exactly correct, not just "no gradient available".
+                    // This is what makes `frac(x) = x - floor(x)` autodiff
+                    // to the right answer (d/dx = 1) via the SUB node's own
+                    // backward: SUB sends +grad to `x` and (this noop) +0
+                    // to `floor(x)`, matching rf-detr-cpp's deformable-
+                    // attention bilinear-weight construction
+                    // (src/deform_attn.cpp) exactly -- see
+                    // docs/decisions/0003-training.md's "Finding 3" note.
+                } break;
                 default: {
                     fprintf(stderr, "%s: unsupported unary op for backward pass: %s\n",
                         __func__, ggml_unary_op_name(ggml_get_unary_op(tensor)));
@@ -7243,8 +7270,8 @@ void ggml_build_backward_expand(
                 break;
             case GGML_OP_UNARY: {
                 const enum ggml_unary_op uop = ggml_get_unary_op(node);
-                // SGN and STEP unary ops are piecewise constant
-                if (uop == GGML_UNARY_OP_SGN || uop == GGML_UNARY_OP_STEP) {
+                // SGN, STEP, and FLOOR unary ops are piecewise constant
+                if (uop == GGML_UNARY_OP_SGN || uop == GGML_UNARY_OP_STEP || uop == GGML_UNARY_OP_FLOOR) {
                     ignore_src[0] = true;
                 }
             } break;
