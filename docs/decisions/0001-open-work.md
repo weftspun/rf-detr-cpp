@@ -253,14 +253,26 @@ variants for each (see their sections above), then phase-2 training.
       and doesn't even need `layer_norm_affine_diff` for THIS scope (the
       frozen decoder stack never has a gradient requested through it) —
       that work stays validated and ready for whenever the scope widens.
-- [ ] Loss: focal + L1 + GIoU (detection) — elementwise/reduction ops, all
-      already backward-capable per Finding 2's audit; GIoU's exact formula
-      not yet decomposed/checked.
-- [ ] Hungarian matching (non-differentiable CPU preprocessing, decoupled
-      from the ggml graph) — not yet implemented.
+- [x] Loss + Hungarian matching implemented and validated
+      (`src/loss.{h,cpp}`, `tests/test_loss.cpp`): sigmoid focal loss + L1
+      + GIoU (upstream's `ia_bce_loss=False` path, not the actual default
+      `ia_bce_loss=True` — needs a stop-gradient mechanism ggml doesn't
+      have natively, documented as a follow-up in `0003-training.md`) +
+      a standard host-side Kuhn-Munkres Hungarian matcher reproducing
+      upstream's exact cost formula. Matched pairs match scipy's real
+      `HungarianMatcher` exactly; loss VALUE matches the real
+      `SetCriterion` to 2e-6; a finite-difference check confirms the
+      gradient is correct. Caught two real bugs: (1) a wrong `.mean(1)`
+      axis assumption that made the loss ~2.2x too large before checking
+      the actual formula, (2) `ggml_sigmoid` has no backward case (same
+      gap class as `ggml_norm`), fixed via the same primitive-
+      decomposition trick as `layer_norm_affine_diff`. Also surfaced a
+      SECOND real ggml training-infra gap (repeated graph execution
+      silently corrupting results — see `0003-training.md`), worked
+      around by rebuilding a fresh graph per evaluation in the test.
 - [ ] Dataset/dataloader (COCO-format annotations → ggml tensors) — not
       yet researched.
-- [ ] `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring once the above land.
+- [ ] `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring once the above lands.
 - [ ] (Deferred, only if scope widens later) Resolve deformable-attention's
       backward (Finding 3) if the decoder becomes trainable; wire
       `layer_norm_affine_diff` into the decoder's LayerNorms at that point.

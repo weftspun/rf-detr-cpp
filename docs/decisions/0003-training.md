@@ -168,20 +168,76 @@ sidesteps the most open work:
 
 Remaining steps for this scope, in order:
 
-1. Loss: focal loss (classification) + L1 + GIoU (box regression) —
-   elementwise/reduction ops, all already backward-capable
-   (`SUB`/`MUL`/`DIV`/`SQR`/`SQRT`/`MEAN`/`SUM` per Finding 2's audit); GIoU
-   needs its own formula checked but likely decomposes the same way.
-2. Hungarian matching (`scipy.optimize.linear_sum_assignment` or
-   equivalent) — non-differentiable CPU preprocessing on detached
-   `pred_boxes`/`pred_logits`, decoupled from the ggml graph entirely; can
-   be plain C++ (e.g. a straightforward Jonker-Volgenant/Hungarian
-   implementation) or shell out to a small Python step, since it never
-   touches the gradient graph.
-3. Dataset/dataloader (COCO-format annotations → ggml input tensors) — not
+1. **Done.** Loss + Hungarian matching (`src/loss.{h,cpp}`): host-side
+   Hungarian matching (a standard O(n²·m) Kuhn-Munkres, matching upstream's
+   exact `matcher.py` cost formula — checkpoint-verified against
+   `scipy.optimize.linear_sum_assignment`'s own real output, not assumed)
+   + a ggml loss graph (sigmoid focal loss + L1 + GIoU). Deliberately
+   reproduces upstream's `ia_bce_loss=False` (plain `sigmoid_focal_loss`)
+   path, NOT the actual default `ia_bce_loss=True` variant — see the
+   "IA-BCE not implemented" note below for why. `ggml_sigmoid` has no
+   backward case either (same class of gap as `ggml_norm` — see Finding 2)
+   so classification probability is computed via the same
+   primitive-decomposition trick as `layer_norm_affine_diff`:
+   `sigmoid(x) = 1/(1+exp(-x))` from SCALE/EXP/ADD/DIV (all backward-
+   capable). GIoU's elementwise min/max (no native ggml op) is built from
+   `a + relu(b-a)` / `a - relu(a-b)`, both backward-capable.
+
+   Validated in isolation (`tests/test_loss.cpp`) against the real
+   upstream `HungarianMatcher`+`SetCriterion` on synthetic data: matched
+   (query,target) pairs match exactly (discrete assignment, no tolerance),
+   the scalar loss value matches to 2e-6, and a finite-difference check on
+   both `pred_logits`/`pred_boxes` gradients confirms the graph is
+   genuinely differentiable and correct. One real bug caught while
+   building the reference: the upstream formula
+   `sigmoid_focal_loss(...).mean(1).sum()/num_boxes * num_queries` looks
+   like it needs a `1/num_classes` scale (`.mean(1)` over what looks like
+   a class axis) but `.mean(1)` is actually over the QUERIES axis
+   (`src_logits` is `(batch,queries,classes)`), and that `1/num_queries`
+   exactly cancels the outer `*num_queries` — the correct combined formula
+   is simply `sum-over-everything / num_boxes`, no `num_classes` term at
+   all. An initial wrong guess (dividing by `num_classes` AND keeping the
+   `num_queries` factor) produced a ~2.2x-too-large loss until caught by
+   diffing against the real reference value.
+
+   **IA-BCE not implemented** (documented gap, not a bug): upstream's
+   actual default (`ia_bce_loss=True`) weights each positive example by
+   `prob^alpha * iou^(1-alpha)` where `iou` is computed from
+   `pred_boxes.detach()` — i.e. a value that must be computed from the
+   CURRENT forward pass but explicitly excluded from the backward graph
+   (a "stop-gradient"). ggml has no direct stop-gradient primitive; doing
+   this correctly needs a two-pass approach (compute IoU in a separate
+   forward-only sub-graph, read its VALUE back to the host, feed it back
+   in as a plain host constant for the main loss graph) — deferred as a
+   documented follow-up, not attempted this pass. The plain
+   `sigmoid_focal_loss` path chosen instead is a real, upstream-provided
+   alternative (not something invented for this port), just not the
+   default.
+
+2. Dataset/dataloader (COCO-format annotations → ggml input tensors) — not
    researched yet.
-4. `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring (Finding 1's existing
-   framework) once 1-3 land.
+3. `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring (Finding 1's existing
+   framework) once 2 lands.
+
+## A second real ggml training-infra gap found: repeated graph execution
+
+While validating `detection_loss`'s backward pass, re-running the SAME
+allocated backward-enabled graph (`ggml_graph_reset` + `ggml_backend_
+graph_compute`, in a loop, for finite-difference perturbation checks —
+the exact pattern `tests/test_norm_backward.cpp` already used successfully
+for the simpler LayerNorm case) silently corrupted the result: a plain
+*re-evaluation at the same unperturbed point* returned 67.9 instead of the
+correct 23.6 the second time the graph was computed. Rebuilding a fresh
+context/graph/allocator for every single evaluation (discarding graph
+reuse entirely) fixed it. Root cause not tracked down — likely related to
+the SegXLarge decoder graph-allocator bug documented separately in
+`docs/decisions/0001-open-work.md`, since both involve a graph being
+computed more than once (there: multiple downstream consumers within one
+compute; here: multiple separate `ggml_backend_graph_compute` calls on one
+allocated graph) producing a corrupted value despite `ggml_graph_reset`.
+Flagging this as a second data point for whoever eventually debugs the
+underlying `ggml-alloc.c` issue — it may be the same root cause showing up
+in two different reuse patterns.
 
 Widening the scope later (decoder trainable, then backbone trainable) is a
 separate future decision — each widening reuses `layer_norm_affine_diff`
