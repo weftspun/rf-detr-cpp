@@ -42,3 +42,9 @@ ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & 
 // y = W x + b for token-major (C_in, T[, N]) activations (bias optional:
 // skipped when "<pre>.bias" is absent)
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre);
+
+// ConvNeXt-style channels-last LayerNorm for spatial WHCN activations:
+// permutes to channel-fastest, ggml_norm over that axis (+ affine), permutes
+// back. Distinct from layer_norm_affine, which normalizes token-major ne[0].
+ggml_tensor * spatial_layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre,
+                                        float eps = 1e-6f);

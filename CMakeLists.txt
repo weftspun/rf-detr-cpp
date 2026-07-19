@@ -9,11 +9,12 @@ add_subdirectory(third_party/ggml)
 add_library(rfdetr STATIC
     src/ops.cpp
     src/backbone.cpp
+    src/projector.cpp
 )
 target_link_libraries(rfdetr PUBLIC ggml)
 target_include_directories(rfdetr PUBLIC src)
 
-foreach(t test_backbone_smoke test_backbone)
+foreach(t test_backbone_smoke test_backbone test_projector)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE rfdetr)
 endforeach()

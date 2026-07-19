@@ -117,3 +117,15 @@ ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     if (m.has(pre + ".bias")) y = ggml_add(ctx, y, m.get(pre + ".bias"));
     return y;
 }
+
+ggml_tensor * spatial_layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre, float eps) {
+    ggml_context * ctx = m.ctx_g;
+    const int64_t W = x->ne[0], H = x->ne[1], C = x->ne[2], N = x->ne[3];
+    ggml_tensor * cf = ggml_cont(ctx, ggml_permute(ctx, x, 1, 2, 0, 3)); // (C,W,H,N), C fastest
+    cf = ggml_reshape_3d(ctx, cf, C, W * H, N);
+    cf = ggml_norm(ctx, cf, eps);
+    cf = ggml_mul(ctx, cf, m.get(pre + ".weight"));
+    cf = ggml_add(ctx, cf, m.get(pre + ".bias"));
+    cf = ggml_reshape_4d(ctx, cf, C, W, H, N);
+    return ggml_cont(ctx, ggml_permute(ctx, cf, 2, 0, 1, 3)); // back to (W,H,C,N)
+}
