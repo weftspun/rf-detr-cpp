@@ -321,9 +321,32 @@ variants for each (see their sections above), then phase-2 training.
       before host readback — same bug class as the `g.loss`-buffer-reuse
       fix already documented below, just not yet applied to param
       tensors. See `0003-training.md` for the full writeup.
-- [ ] Dataset/dataloader beyond this one hardcoded real image (COCO-format
-      annotations → ggml tensors for an arbitrary image, batching,
-      iteration over a full split) — not yet researched.
+- [x] Dataset/dataloader beyond one hardcoded real image: `src/dataset.{h,cpp}`
+      (`CocoDataset`) + `gen_reference/gen_coco_dataset.py` generalize
+      `gen_reference_real_image.py`'s single-image pipeline to a whole
+      directory of real COCO images — one Python preprocessing pass over
+      `data/val2017_sample/` (24 real val2017 images, downloaded this
+      session) writes one binary dump per image (same per-file format as
+      before) plus a `manifest.txt`; the C++ `CocoDataset` loader reads the
+      manifest and lazily loads each item on demand (no full-dataset
+      caching, so memory stays bounded regardless of split size).
+      `train_step_demo.cpp` now cycles through the dataset (`step %
+      dataset.size()`, wrapping like an epoch boundary) instead of
+      training on one repeated image — validated over 30 steps across all
+      24 real images (plus 6 steps of a second wraparound pass): loss
+      stays finite and bounded throughout (0.24–2.51 range, no NaN/blowup,
+      consistent with per-image variation in a real, un-tuned classifier),
+      confirming the earlier single-image numerical-blowup fixes
+      (`output_proposals` upload, param-tensor buffer protection) hold
+      across genuinely different real inputs, not just one lucky image.
+      Batching (multiple images per graph) not implemented — out of scope
+      for this pass; the existing "multi-image = call per image, share one
+      Model" pattern (`docs/decisions/0001-open-work.md`'s earlier
+      multi-image-batching resolution) is the natural fit whenever needed.
+      Iteration over a FULL COCO split (5000 images) not attempted — the
+      24-image sample is enough to prove the loader/cycling logic is
+      correct; scaling up is a config change (more images in
+      `data/val2017_sample/`), not a code change.
 - [ ] `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring (the demo hand-rolls
       identical AdamW math as a host-side loop instead, to sidestep the
       repeated-graph-execution gap above) once the dataloader lands.

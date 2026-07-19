@@ -15,6 +15,7 @@ add_library(rfdetr STATIC
     src/segmentation.cpp
     src/keypoints.cpp
     src/loss.cpp
+    src/dataset.cpp
 )
 target_link_libraries(rfdetr PUBLIC ggml)
 target_include_directories(rfdetr PUBLIC src)

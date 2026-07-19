@@ -8,5 +8,6 @@ build-vulkan/
 reference_*.bin
 reference_*.npz
 gen_reference/*.bin
+gen_reference/coco_sample_384/
 /*.log
 data/
