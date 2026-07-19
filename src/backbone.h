@@ -2,7 +2,15 @@
 // (rfdetr/models/backbone/dinov2_with_windowed_attn.py upstream).
 //
 // Verified against real upstream checkpoints (see
-// docs/decisions/backbone-windowing.md). Single-image inference only (N=1).
+// docs/decisions/backbone-windowing.md). Each call processes ONE image
+// (x's own batch dim, ne[3], is always 1) -- the windowed-attention trick
+// already spends ggml's other spare batch axis on per-window batching
+// (token-major tensors are (C,T,nw2), not (C,T,1,N_img)), so there's no
+// free 4th dimension left for a true image-batch axis without restructuring
+// windowed attention itself. Multiple images are handled by calling this
+// (and projector_p4/rfdetr_decoder) once PER IMAGE, sharing one Model --
+// validated to produce genuinely independent, non-aliased results even
+// within a single ggml context/graph (tests/test_backbone_multi_image.cpp).
 #pragma once
 
 #include "ops.h"

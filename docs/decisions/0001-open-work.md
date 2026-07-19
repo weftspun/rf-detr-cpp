@@ -72,8 +72,17 @@ what was open and when it closed.
       deformable cross-attention's `n_levels` dimension is currently
       unexercised beyond 1, so this needs real `src/deform_attn.cpp` work,
       not just a config-table addition.
-- [ ] Multi-image batching (N>1) not supported — `backbone.cpp`'s
-      windowed/global merge-reshape trick assumes a single image per graph
+- [x] Multi-image batching: `dinov2_backbone`'s windowed-attention trick
+      already spends ggml's only spare batch axis on per-window batching
+      (token-major tensors are `(C,T,nw2)`, not `(C,T,1,N_img)`), so a true
+      4th image-batch dimension isn't available without restructuring
+      windowed attention itself. Resolved as: call `dinov2_backbone` (and
+      `projector_p4`/`rfdetr_decoder`) once per image, sharing one `Model`
+      — validated (`test_backbone_multi_image.cpp`) that two independent
+      graph-build calls sharing a `Model`'s weights produce genuinely
+      independent, non-aliased results even within a single ggml
+      context/graph. No code changes needed; this is the standard
+      static-graph-inference batching pattern.
 
 ### Instance segmentation (RFDETRSegNano) — done
 
