@@ -109,7 +109,25 @@ what was open and when it closed.
       per review feedback (`docs/decisions/segmentation.md`)
 - [ ] The *exact* mechanism behind the mask head's larger residual diff
       (random channel-sign accumulation vs. boundary-pixel sensitivity vs.
-      both) is not nailed down — only that it isn't a wiring/aliasing bug
+      both) is not nailed down — only that it isn't a wiring/aliasing bug.
+      New cross-variant evidence (from the SegXLarge investigation, a later
+      session): SegXLarge's mask residual (0.627 max-abs-diff) shows the
+      EXACT same signature as SegNano's original finding — a tiny
+      `mean_abs_diff` (0.0047, i.e. the overwhelming majority of pixels
+      match closely) with the max concentrated in a handful of outliers.
+      If this were pure random-channel-sign accumulation scaling
+      uniformly with `sqrt(256)` across all pixels, the *mean* would be
+      elevated too, not just rare maxima — this pattern recurring
+      identically across two very different model scales (SegNano's
+      156-channel dot product at a small resolution vs. SegXLarge's same
+      structure at `dec_layers=6`, 624-res) is independent evidence
+      favoring boundary/outlier-pixel sensitivity as at least the dominant
+      factor, not disproving channel accumulation as a contributor but
+      making "boundary sensitivity alone explains most of it" the more
+      likely single-largest cause. Still not a controlled experiment
+      isolating pre- vs. post-GELU activation at the specific outlier
+      pixel (the concrete next step if this gets picked up again) — kept
+      open rather than closed on this evidence alone.
 - [x] RFDETRSegSmall validated end-to-end (`test_segmentation_small`: boxes
       4.5e-4, logits 4.9e-4, masks 4.9e-2 against the 0.15 gate —
       noticeably tighter than SegNano's 0.109, consistent with the
