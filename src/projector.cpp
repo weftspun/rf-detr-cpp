@@ -39,11 +39,12 @@ static ggml_tensor * c2f(Model & m, ggml_tensor * x, const std::string & pre, in
     return conv_x(m, cat, pre + ".cv2", 1, 1);
 }
 
-ggml_tensor * projector_p4(Model & m, const std::vector<ggml_tensor *> & taps, int out_channels) {
+ggml_tensor * projector_p4(Model & m, const std::vector<ggml_tensor *> & taps, int out_channels,
+                           const std::string & prefix) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * fused = taps[0];
     for (size_t i = 1; i < taps.size(); i++) fused = ggml_concat(ctx, fused, taps[i], 2);
 
-    ggml_tensor * y = c2f(m, fused, "projector.stages.0.0", out_channels, 3);
-    return spatial_layer_norm_affine(m, y, "projector.stages.0.1");
+    ggml_tensor * y = c2f(m, fused, prefix + ".stages.0.0", out_channels, 3);
+    return spatial_layer_norm_affine(m, y, prefix + ".stages.0.1");
 }

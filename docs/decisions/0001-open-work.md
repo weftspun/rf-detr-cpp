@@ -52,7 +52,7 @@ what was open and when it closed.
 - [ ] `RFDETRSegPreviewConfig` and other non-Nano segmentation configs
       unvalidated
 
-### Keypoint detection (RFDETRKeypointPreview) — research done, implementation not started
+### Keypoint detection (RFDETRKeypointPreview) — done
 
 - [x] Resolve where `init_kp_ref_xy` is actually consumed in the inference
       forward path — resolved: it's a presence-guard only, never read
@@ -69,24 +69,30 @@ what was open and when it closed.
       found a dead legacy `keypoint_head.keypoint_proj.*` weight set
       (confirmed unused via `weights.py`'s own comment) that no amount of
       source reading would have surfaced.
-- [ ] Implement the dual projector (reuse `projector_p4` with the
-      `cross_attn_projector` weight prefix — confirmed present in the
-      checkpoint)
-- [ ] Implement `ConditionalQueryInitializer` (AdaLN-modulated keypoint
+- [x] Implement the dual projector (reuse `projector_p4` with the
+      `cross_attn_projector` weight prefix)
+- [x] Implement `ConditionalQueryInitializer` (AdaLN-modulated keypoint
       query initialization)
-- [ ] Implement the per-layer keypoint sublayer: keypoint-instance
-      self-attention (masked, but the mask is a no-op for
-      `num_keypoints_per_class=[17]`'s single class), keypoint-specific
-      deformable cross-attention (reuse `ms_deform_attn()` verbatim against
-      the dual projector's second memory), keypoint-specific FFN
-- [ ] Implement final keypoint head decode + `_format_keypoint_output`
-      (a no-op pass-through for the single-class case) +
-      `_aggregate_keypoint_class_logits`
-- [ ] GGUF conversion script (`scripts/convert_keypoints_to_gguf.py`) +
-      `gen_reference/gen_reference_keypoints.py` (real upstream module via
-      `uv run --with rfdetr`) + a C++ test with a max-abs-diff gate
+- [x] Implement the per-layer keypoint sublayer: keypoint-instance
+      self-attention, keypoint-specific deformable cross-attention (reuse
+      `ms_deform_attn()` verbatim), keypoint-specific FFN
+- [x] Implement final keypoint head decode + `_format_keypoint_output` +
+      `_aggregate_keypoint_class_logits` — caught a real bug here: the
+      checkpoint's actual `num_keypoints_per_class` schema is `[0,17]`
+      (active class index **1**), not the initially-guessed `[17,0]`
+      (index 0) — a shape-only check (`_kp_active_mask`'s `(2,17)` shape)
+      didn't distinguish the two; only inspecting the mask's boolean
+      *values* did. See `docs/decisions/keypoints.md`.
+- [x] GGUF conversion script (`scripts/convert_keypoints_to_gguf.py`) +
+      `gen_reference/gen_reference_keypoints.py` + `tests/test_keypoints.cpp`
+      — validated end-to-end: boxes 3.5e-3, logits 9.3e-4, keypoints 4.2e-3
+      (gate 5e-2 all three)
 
-Full architecture research: `docs/decisions/keypoints.md`.
+Full architecture + implementation notes: `docs/decisions/keypoints.md`.
+
+**All three inference milestones (object detection, instance segmentation,
+keypoint detection) are now done.** Remaining scope: other model-size
+variants for each (see their sections above), then phase-2 training.
 
 ### Phase 2: finetuning/training — not started
 

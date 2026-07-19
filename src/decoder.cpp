@@ -1,5 +1,6 @@
 #include "decoder.h"
 #include "deform_attn.h"
+#include "keypoints.h"
 
 #include <cmath>
 
@@ -48,7 +49,8 @@ static ggml_tensor * sine_embed_1coord(ggml_context * ctx, ggml_tensor * v, ggml
 }
 
 DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParams & p,
-                             ggml_tensor * topk_idx_override) {
+                             ggml_tensor * topk_idx_override,
+                             const KeypointParams * kp, ggml_tensor * kp_memory) {
     ggml_context * ctx = m.ctx_g;
     const int gwh = p.gw * p.gh;
     const int hd = p.hidden_dim;
@@ -99,9 +101,20 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
     ggml_tensor * sine = ggml_concat(ctx, ggml_concat(ctx, pos_y, pos_x, 0), ggml_concat(ctx, pos_w, pos_h, 0), 0); // (512,nq,1)
     ggml_tensor * query_pos = mlp(m, sine, "decoder.ref_point_head", 2); // (256,nq,1), ReLU between layers 0/1
 
+    // keypoint init (once, decoder-level ConditionalQueryInitializer conditioned
+    // on the initial tgt -- before any decoder layer runs)
+    ggml_tensor * keypoint_tgt = nullptr;
+    ggml_tensor * keypoint_pos = nullptr;
+    if (kp) {
+        ggml_tensor * cond = ggml_reshape_3d(ctx, ggml_cont(ctx, ggml_permute(ctx, tgt, 0, 2, 1, 3)), hd, 1, p.num_queries);
+        keypoint_tgt = conditional_query_initializer(m, cond, "keypoint_query_initializer", kp->num_kp, hd);
+        keypoint_pos = ggml_reshape_3d(ctx, m.get("decoder.keypoint_pos_embed"), hd, kp->num_kp, 1);
+    }
+
     // decoder layers
     ggml_tensor * tgt_cur = tgt;
     std::vector<ggml_tensor *> out_hs;
+    std::vector<ggml_tensor *> out_kp;
     for (int l = 0; l < p.dec_layers; l++) {
         const std::string pre = "decoder.layers." + std::to_string(l) + ".";
 
@@ -136,6 +149,20 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
         ff = linear(m, ff, pre + "linear2");
         tgt_cur = layer_norm_affine(m, ggml_add(ctx, tgt_cur, ff), pre + "norm3");
 
+        // GroupPose keypoint sublayer (4th sublayer, only when kp is set): runs
+        // after the ordinary 3 sublayers, using the SAME per-layer query_pos and
+        // fixed ref_points; MUTATES tgt_cur further (kp_inst_norm's output, not
+        // norm3's) -- both the next layer and this layer's decoder.norm tap below
+        // must see the keypoint-updated tgt_cur, matching upstream's forward_post
+        // returning (tgt, keypoint_tgt) as one combined step.
+        if (kp) {
+            KeypointLayerOutput kout = keypoint_decoder_layer(m, tgt_cur, query_pos, keypoint_tgt, keypoint_pos,
+                                                              ref_points, kp_memory, pre, *kp, p.gw, p.gh);
+            tgt_cur = kout.tgt;
+            keypoint_tgt = kout.keypoint_tgt;
+            out_kp.push_back(keypoint_tgt);
+        }
+
         // return_intermediate=True always: the shared decoder.norm is applied to
         // EVERY layer's output independently for the intermediate/aux list (the
         // raw, unnormed tgt_cur is what continues into the next layer, unaffected).
@@ -147,10 +174,28 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
     ggml_tensor * final_hs = out_hs.back();
 
     DecoderOutput out;
-    out.pred_logits = linear(m, final_hs, "class_embed");
+    ggml_tensor * class_logits = linear(m, final_hs, "class_embed");
     ggml_tensor * bbox_delta = mlp(m, final_hs, "bbox_embed", 3);
     out.pred_boxes = bbox_reparam_decode(ctx, bbox_delta, ref_points);
     out.output_proposals = proposals;
     out.hidden_states = out_hs;
+
+    if (kp) {
+        KeypointHeadOutput kdec = keypoint_final_decode(m, out_kp.back(), ref_points, kp->num_kp,
+                                                        kp->num_keypoint_classes, kp->active_class_idx);
+        out.pred_keypoints = kdec.pred_keypoints;
+        // class-logit boost applies only to kp->active_class_idx (this
+        // checkpoint's single active keypoint class, confirmed against the
+        // checkpoint's own _kp_active_mask buffer -- see
+        // docs/decisions/keypoints.md); every other class (including
+        // background) is unchanged.
+        const size_t boost_off = (size_t) kp->active_class_idx * sizeof(float);
+        ggml_tensor * class_col = ggml_cont(ctx, ggml_view_3d(ctx, class_logits, 1, class_logits->ne[1], 1,
+                                                              class_logits->nb[1], class_logits->nb[2], boost_off));
+        class_col = ggml_add(ctx, class_col, kdec.class_logit_boost); // both (1, num_queries, 1)
+        class_logits = ggml_set_2d(ctx, class_logits, ggml_reshape_2d(ctx, class_col, 1, p.num_queries),
+                                   class_logits->nb[1], boost_off);
+    }
+    out.pred_logits = class_logits;
     return out;
 }

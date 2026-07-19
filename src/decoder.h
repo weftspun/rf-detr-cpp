@@ -30,12 +30,16 @@ struct DecoderOutput {
                                               // hidden_states.back() == the tensor pred_boxes/
                                               // pred_logits are derived from. Needed by the
                                               // segmentation head (one block per decoder layer).
+    ggml_tensor * pred_keypoints = nullptr; // (8, num_kp, num_queries, 1), only set when a
+                                            // KeypointParams was passed to rfdetr_decoder.
 };
 
 // Host-side constant matching gen_encoder_output_proposals (single level, no
 // padding): per grid cell (row,col), (cx,cy,w,h) = ((col+.5)/gw,(row+.5)/gh,.05,.05).
 // Row-major, width-fastest, matching the backbone/projector flatten convention.
 std::vector<float> output_proposals_data(int gw, int gh);
+
+struct KeypointParams; // src/keypoints.h
 
 // memory: (hidden_dim, gw*gh, 1) token-major flattened projector output.
 // topk_idx_override: if non-null, used instead of ggml_top_k for the
@@ -44,5 +48,10 @@ std::vector<float> output_proposals_data(int gw, int gh);
 // docs/decisions/decoder.md), so numeric validation against a reference
 // dump injects the reference's own indices here rather than fighting an
 // order-invariant comparison. Leave null for normal inference.
+// kp: if non-null, runs the GroupPose keypoint sublayer after every
+// ordinary decoder layer (see docs/decisions/keypoints.md); kp_memory must
+// then also be non-null -- the dual projector's second (gw,gh,hidden_dim,1)
+// feature map, flattened the same way as `memory`.
 DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParams & p,
-                             ggml_tensor * topk_idx_override = nullptr);
+                             ggml_tensor * topk_idx_override = nullptr,
+                             const KeypointParams * kp = nullptr, ggml_tensor * kp_memory = nullptr);

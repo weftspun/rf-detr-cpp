@@ -1,13 +1,15 @@
-# Keypoint head port decisions (RFDETRKeypointPreview) — research draft
+# Keypoint head port decisions (RFDETRKeypointPreview)
 
-Status: **architecture fully researched and checkpoint-verified, no C++
-implementation yet**. This is a genuinely new architecture component (a
-whole second "GroupPose" decoder stream interleaved with the detection
-decoder), unlike segmentation which reused the existing decoder/backbone
-verbatim with different config values. Every open question this doc
-originally flagged is now resolved (see "Resolved" markers throughout) —
-implementation can start directly from this spec. Read this file in full
-before starting `src/keypoints.cpp` — the upstream code
+Status: **validated end-to-end**. `tests/test_keypoints.cpp` runs the full
+pipeline (backbone → dual projector → decoder + GroupPose keypoint stream)
+against the real `rf-detr-keypoint-preview.pth` checkpoint: `pred_boxes`
+3.5e-3, `pred_logits` 9.3e-4, `pred_keypoints` 4.2e-3 (gate 5e-2 all three).
+**All three inference milestones (detection, segmentation, keypoints) are
+now done.** This was a genuinely new architecture component (a whole
+second "GroupPose" decoder stream interleaved with the detection decoder),
+unlike segmentation which reused the existing decoder/backbone verbatim
+with different config values. Read this file in full before touching
+`src/keypoints.cpp` — the upstream code
 (`rfdetr/models/transformer.py`'s `if self.enable_keypoint_processing:`
 branches, explicitly skipped during the detection-decoder research) is
 intricate; get the wiring right on paper first.
@@ -244,19 +246,45 @@ Final: `out["pred_keypoints"] = outputs_keypoints[-1]` (last layer only).
 - Final `out["pred_keypoints"] = outputs_keypoints[-1]` — last layer only
   (mirrors detection's `[-1]`, unlike segmentation's "all layers").
 
-## Implementation plan and open tasks
+## Implementation (`src/keypoints.{h,cpp}`, wired into `src/decoder.cpp`)
 
-All research questions this doc originally raised are resolved (init_kp_ref_xy
-is dead code, keypoint_embed's shape and consumers are fully traced, the
-checkpoint's dims and the dead keypoint_head.keypoint_proj.* keys are
-confirmed). Remaining work is implementation, not research — tracked as an
-actionable checklist in [`0001-open-work.md`](0001-open-work.md)'s
-"Keypoint detection" section, not duplicated here — this file stays the
-architecture reference. Summary: implement the dual projector (reuse
-`projector_p4` with the `cross_attn_projector` prefix — verified present
-in the checkpoint), `ConditionalQueryInitializer`, the per-layer keypoint
-sublayer (self-attn + deformable cross-attn + FFN, all shapes confirmed
-above), the final keypoint decode + class-logit aggregation, then the
-conversion script, reference dump, and C++ test — same methodology as
-every prior milestone. **No line of `src/keypoints.cpp` has been written
-yet**; everything above is architecture research, now checkpoint-verified.
+Built exactly per the architecture above: `conditional_query_initializer()`
+(AdaLN modulation via `ggml_repeat_4d` to broadcast the per-query
+scale/shift/gate against the shared per-keypoint queries — no single ggml
+op does the two-way `(num_kp) × (num_queries)` broadcast a naive
+`ggml_mul` needs), `keypoint_decoder_layer()` (instance self-attention
+batched as `num_queries` groups of `1+num_kp` tokens, reusing the
+per-window-batching idea from `backbone.cpp`; deformable cross-attention
+reuses `ms_deform_attn()` verbatim against the dual projector's output with
+each keypoint sampling from its **parent query's own reference box**,
+repeated per-keypoint via the same `ggml_repeat_4d` trick), and
+`keypoint_final_decode()` (box-reparam xy decode + `_format_keypoint_output`
+padding + class-logit boost). `src/decoder.cpp` gained an optional
+`KeypointParams`/`kp_memory` pair threaded through the existing per-layer
+loop — detection-only callers (Nano, SegNano) pass `nullptr` and are
+unaffected (both re-validated after this change).
+
+### A real bug found only by checking `_kp_active_mask`'s *values*, not its shape
+
+Two of `_format_keypoint_output`'s parameters — `num_keypoint_classes` and
+`active_class_idx` — were initially guessed as `2` and `0`
+(`num_keypoints_per_class=[17,0]`: real keypoints in padding slots
+`[0:17)`, class-logit boost on logits column 0). This looked
+**self-consistent**: a reference dump built with that same guess matched a
+C++ implementation using the same guess, on both `pred_keypoints` (4.2e-3)
+*and* — misleadingly — appeared to only fail on `pred_logits`. The
+`pred_logits` failure (mean-abs-diff 0.42, clearly not float noise) was the
+tell. Directly capturing upstream's own `_aggregate_keypoint_class_logits`
+output via a hook showed the boost was **exactly 0** for every query with
+that guess — and inspecting the checkpoint's actual `_kp_active_mask`
+buffer *values* (not just its `(2,17)` shape, which is consistent with
+either `[17,0]` or `[0,17]`) showed row 0 all-`False`, row 1 all-`True`:
+the real schema is `num_keypoints_per_class=[0,17]`, i.e.
+`active_class_idx=1`. With the correct schema, `pred_logits` matched to
+9.3e-4. **Lesson for future checkpoint verification**: a tensor's *shape*
+matching an assumption is necessary but not sufficient — when a shape is
+ambiguous between two orderings, check the actual values before trusting
+either. `docs/decisions/backbone-windowing.md`'s off-by-one and this bug
+are the same category of mistake: an assumption that was locally
+consistent but wrong, caught only by validating against real data rather
+than re-deriving from source or shape alone.
