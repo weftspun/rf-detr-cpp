@@ -100,6 +100,24 @@ reimplementation feeding a large dot product, not a logic bug — hence the
 gate is relaxed specifically for `pred_masks`, with this reasoning recorded
 inline in `tests/test_segmentation.cpp` and here.
 
+**Confirmed by direct ablation** (requested as a second-opinion follow-up,
+not just the indirect evidence above): ran `segmentation_head()` fed the
+*exact* real captured `spatial_features` plus this port's own
+`hidden_states[0..2]` (unchanged) but with `hidden_states[3]` swapped for
+the *exact* reference value. Result: `mask[3]`'s error dropped from 0.109 to
+6.3e-5 (near machine precision) — i.e. **100% of the full-pipeline mask
+discrepancy is attributable to `hidden_states[3]`'s own ~2.5e-3 drift**
+(itself already the accepted scale behind `test_decoder`'s `pred_logits`
+7.3e-4/`pred_boxes` 3.3e-4 checks), not to any wiring/pairing/aliasing bug
+in `segmentation_head()`'s block loop. This rules out an off-by-one in the
+`blocks[i]`↔`hidden_states[i]` pairing, an aliasing hazard in how
+`out_hs` accumulates across `src/decoder.cpp`'s layer loop (the
+`ggml_clamp`-style in-place-aliasing bug class was explicitly checked for
+and not found — `layer_norm_affine` is not in-place, confirmed via
+`ggml_norm`'s `inplace=false` call), and a shared-vs-per-block weight mix-up
+(`spatial_features_proj`/`query_features_proj`/`bias` are correctly reused
+identically every iteration, matching upstream's single shared modules).
+
 ## Still unverified
 
 - Other segmentation variants (Small/Medium/Large/XL/2XL) — only Nano is
