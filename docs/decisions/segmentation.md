@@ -146,15 +146,6 @@ and not found — `layer_norm_affine` is not in-place, confirmed via
 (`spatial_features_proj`/`query_features_proj`/`bias` are correctly reused
 identically every iteration, matching upstream's single shared modules).
 
-## Still unverified
-
-- Other segmentation variants (Small/Medium/Large/XL/2XL) — only Nano is
-  validated.
-- `RFDETRSegPreviewConfig` and other non-Nano-specific segmentation configs.
-- The *exact* mechanism behind the mask head's error amplification (random
-  channel-sign accumulation vs. magnitude/boundary-pixel sensitivity vs.
-  both) is not nailed down — only that it isn't a wiring/aliasing bug. This
-  dot-product-without-normalization pattern is expected to recur for any
-  future un-normalized head; budget time to re-derive per-head gates rather
-  than assuming 5e-2 is always achievable, and don't assume a relaxed gate
-  is automatically safe without the same kind of ablation done here.
+Open tasks (other segmentation variants, `RFDETRSegPreviewConfig`, and the
+exact amplification-mechanism question) are tracked in
+[`0001-open-work.md`](0001-open-work.md), not duplicated here.

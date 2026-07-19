@@ -195,38 +195,16 @@ segmentation, needs all layers or just the last one before assuming
 - Final `out["pred_keypoints"] = outputs_keypoints[-1]` — last layer only
   (mirrors detection's `[-1]`, unlike segmentation's "all layers").
 
-## Implementation plan (next iterations)
+## Implementation plan and open tasks
 
-1. Resolve the `init_kp_ref_xy` consumer question above (read
-   `keypoint_embed`, confirm whether `keypoint_query_initializer_enc`/
-   `enc_out_keypoint_embed` are needed for inference or training-loss-only).
-2. Read `self.keypoint_embed`'s definition and `_aggregate_keypoint_class_logits`
-   in full.
-3. Download `rf-detr-keypoint-preview-xlarge.pth`, verify backbone/decoder
-   dims against real checkpoint keys (don't trust the "xlarge" filename).
-4. Extend `src/decoder.cpp` (or a new `src/keypoints.cpp` calling into it)
-   with: dual projector (reuse `src/projector.cpp`'s `projector_p4` with a
-   different weight prefix — it's already parameterized by prefix
-   implicitly via `Model`'s global weight map, just needs the
-   `cross_attn_projector` prefix wired through), `ConditionalQueryInitializer`
-   (AdaLN modulation — new small op sequence, straightforward), the 4th
-   per-layer keypoint sublayer (self-attn reusing the per-window-batching
-   trick from `backbone.cpp`, deformable cross-attn reusing
-   `ms_deform_attn()` verbatim), and final keypoint head decode.
-5. GGUF conversion script, `gen_reference_keypoints.py` using the real
-   upstream module (same `uv run --with rfdetr` pattern), C++ test with a
-   max-abs-diff gate — same methodology as every prior milestone.
-
-## Still unverified
-
-Everything above is read-only source analysis this session; **no line of
-`src/keypoints.cpp` has been written yet**, and none of the checkpoint-key
-assumptions have been checkpoint-verified (unlike backbone/decoder/
-segmentation, where every prefix was double-checked against a real
-downloaded `.pth`'s `data.pkl` string scan before writing conversion code).
-Do that verification pass first in the next iteration, the same way it was
-done for every prior milestone — this project's own history
-(`docs/decisions/backbone-windowing.md`'s off-by-one,
-`docs/decisions/decoder.md`'s non-zero `refpoint_embed`) shows source
-reading alone gets non-obvious details wrong often enough that checkpoint
-verification is not optional.
+Tracked as an actionable checklist in
+[`0001-open-work.md`](0001-open-work.md)'s "Keypoint detection" section,
+not duplicated here — this file stays the architecture reference. Summary:
+resolve `init_kp_ref_xy`'s real consumer and read `keypoint_embed`/
+`_aggregate_keypoint_class_logits` in full, verify the checkpoint's actual
+backbone/decoder dims (the "xlarge" filename is an unresolved discrepancy
+against the config class), then implement the dual projector,
+`ConditionalQueryInitializer`, the per-layer keypoint sublayer, final
+decode, conversion script, reference dump, and C++ test — same methodology
+as every prior milestone. **No line of `src/keypoints.cpp` has been written
+yet**; everything above is read-only source analysis.

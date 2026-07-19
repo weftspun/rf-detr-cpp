@@ -10,8 +10,10 @@ keypoint detection. Modeled on
 conversion first, per-milestone validated ggml graphs, no PyTorch at runtime.
 
 See [docs/architecture.md](docs/architecture.md) for the upstream model
-architecture notes this port is working from, and
-[docs/decisions/](docs/decisions/) for divergence/port-decision records.
+architecture notes this port is working from,
+[docs/decisions/](docs/decisions/) for divergence/port-decision records, and
+[docs/decisions/0001-open-work.md](docs/decisions/0001-open-work.md) for the
+consolidated open-task checklist across all milestones.
 
 ## Status
 

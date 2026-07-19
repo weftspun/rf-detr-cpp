@@ -148,14 +148,12 @@ needed for this). Confirms:
   Deformable-DETR decoder — no `segmentation`/`keypoint` head keys, as
   expected for a plain detection checkpoint).
 
-## Still unverified
+## Confirmed, previously listed as unverified
 
-- `qkv_bias` (config default `True`) — assumed present; `linear()` already
-  handles bias-optional generically either way.
 - `hidden_act` default `"gelu"` → HF's `ACT2FN["gelu"]` is erf-based exact
   GELU (`ggml_gelu_erf`), not tanh-approximate — used in `dinov2_block`.
-- Everything above is a structural/key-name check, not a numeric one — no
-  reference dump has been diffed against this port yet. That's the next
-  concrete step: get `torch` available (via `uv`, no system install present)
-  and write `gen_reference/gen_reference_backbone.py` +
-  `scripts/convert_dinov2_to_gguf.py` against this same Nano checkpoint.
+  Confirmed correct by `test_backbone`'s numeric pass.
+
+Open tasks (backbone variants, position-embedding interpolation, `qkv_bias`
+presence, multi-image batching) are tracked in
+[`0001-open-work.md`](0001-open-work.md), not duplicated here.
