@@ -138,8 +138,20 @@ static ggml_tensor * sine_embed_1coord(ggml_context * ctx, ggml_tensor * v, ggml
 
 DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParams & p,
                              ggml_tensor * topk_idx_override,
-                             const KeypointParams * kp, ggml_tensor * kp_memory, bool trainable_boxes) {
+                             const KeypointParams * kp, ggml_tensor * kp_memory, bool trainable) {
     ggml_context * ctx = m.ctx_g;
+    // Every LayerNorm in this function uses the diff (primitive-decomposed,
+    // backward-capable) version when trainable is set, matching the
+    // same flag that already selects bbox_reparam_decode_diff -- gradient
+    // must flow through EVERY norm between the trainable weights (whichever
+    // subset the caller marks with ggml_set_param) and pred_boxes/
+    // pred_logits, regardless of which specific decoder weights end up
+    // trainable. layer_norm_affine_diff is numerically identical to
+    // layer_norm_affine for inference (tests/test_norm_backward.cpp), so
+    // this has zero effect on non-trainable graphs.
+    auto norm = [&](ggml_tensor * x, const std::string & pre) {
+        return trainable ? layer_norm_affine_diff(m, x, pre) : layer_norm_affine(m, x, pre);
+    };
     const bool multilevel = !p.levels.empty();
     int gwh = p.gw * p.gh;
     if (multilevel) {
@@ -184,7 +196,7 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
     }
 
     // two-stage encoder proposals (group 0 only; group_detr is a no-op at inference)
-    ggml_tensor * output_memory = layer_norm_affine(m, linear(m, memory_for_proposals, "enc_output.0"), "enc_output_norm.0");
+    ggml_tensor * output_memory = norm(linear(m, memory_for_proposals, "enc_output.0"), "enc_output_norm.0");
     ggml_tensor * enc_class = linear(m, output_memory, "enc_out_class_embed.0");     // (num_classes, gwh, 1)
     ggml_tensor * enc_delta = mlp(m, output_memory, "enc_out_bbox_embed.0", 3);      // (4, gwh, 1)
     ggml_tensor * enc_boxes = bbox_reparam_decode(ctx, enc_delta, proposals);        // (4, gwh, 1)
@@ -267,7 +279,7 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
         kqv = ggml_reshape_3d(ctx, kqv, hd, T, 1);
         ggml_tensor * self_out = linear(m, kqv, pre + "self_attn.out_proj");
 
-        tgt_cur = layer_norm_affine(m, ggml_add(ctx, tgt_cur, self_out), pre + "norm1");
+        tgt_cur = norm(ggml_add(ctx, tgt_cur, self_out), pre + "norm1");
 
         ggml_tensor * cross_q = ggml_add(ctx, tgt_cur, query_pos);
         ggml_tensor * cross_out = multilevel
@@ -275,12 +287,12 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
                                         p.ca_nheads, p.dec_n_points, p.levels)
             : ms_deform_attn(m, cross_q, memory, ref_points, pre + "cross_attn",
                              p.ca_nheads, p.dec_n_points, p.gw, p.gh);
-        tgt_cur = layer_norm_affine(m, ggml_add(ctx, tgt_cur, cross_out), pre + "norm2");
+        tgt_cur = norm(ggml_add(ctx, tgt_cur, cross_out), pre + "norm2");
 
         ggml_tensor * ff = linear(m, tgt_cur, pre + "linear1");
         ff = ggml_relu(ctx, ff);
         ff = linear(m, ff, pre + "linear2");
-        tgt_cur = layer_norm_affine(m, ggml_add(ctx, tgt_cur, ff), pre + "norm3");
+        tgt_cur = norm(ggml_add(ctx, tgt_cur, ff), pre + "norm3");
 
         // GroupPose keypoint sublayer (4th sublayer, only when kp is set): runs
         // after the ordinary 3 sublayers, using the SAME per-layer query_pos and
@@ -301,7 +313,7 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
         // raw, unnormed tgt_cur is what continues into the next layer, unaffected).
         // Only the last layer's normed output feeds pred_boxes/pred_logits, but the
         // segmentation head needs all of them (one DepthwiseConvBlock per layer).
-        out_hs.push_back(layer_norm_affine(m, tgt_cur, "decoder.norm"));
+        out_hs.push_back(norm(tgt_cur, "decoder.norm"));
     }
 
     ggml_tensor * final_hs = out_hs.back();
@@ -309,11 +321,11 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
     DecoderOutput out;
     ggml_tensor * class_logits = linear(m, final_hs, "class_embed");
     ggml_tensor * bbox_delta = mlp(m, final_hs, "bbox_embed", 3);
-    // trainable_boxes selects backward-capable (clamped, diverges from
+    // trainable selects backward-capable (clamped, diverges from
     // upstream only when delta_wh is extreme) vs the exact-match default
     // -- see decoder.h's docstring and docs/decisions/0001-open-work.md's
     // SegXLarge root-cause writeup.
-    out.pred_boxes = trainable_boxes ? bbox_reparam_decode_diff(ctx, bbox_delta, ref_points)
+    out.pred_boxes = trainable ? bbox_reparam_decode_diff(ctx, bbox_delta, ref_points)
                                      : bbox_reparam_decode(ctx, bbox_delta, ref_points);
     out.output_proposals = proposals;
     out.valid_mask = valid_mask;

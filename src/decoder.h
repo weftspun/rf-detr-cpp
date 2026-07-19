@@ -104,22 +104,34 @@ struct KeypointParams; // src/keypoints.h
 // then also be non-null -- the dual projector's second (gw,gh,hidden_dim,1)
 // feature map, flattened the same way as `memory`. Not supported together
 // with p.levels (no multi-level keypoint variant exists upstream).
-// trainable_boxes: if true, the final pred_boxes decode uses
-// bbox_reparam_decode_diff (SET-based, clamps delta_wh to [-4,4] before
-// exp -- needed because ggml_concat has no backward case, see
-// docs/decisions/0003-training.md). If false (default), uses the ORIGINAL
-// bbox_reparam_decode (CONCAT-based, no clamp) -- this matches upstream's
-// exact unclamped `outputs_coord_wh = delta.exp() * ref_wh` numerically,
-// including its float32 exp-underflow-to-EXACTLY-0 behavior for extreme
-// delta values. The clamp is a genuine, deliberate training-time
-// numerical-safety measure, not an inference-time correctness fix --
-// applying it unconditionally silently diverges from upstream whenever
-// delta_wh legitimately exceeds +-4 (confirmed: this is exactly what was
-// behind RFDETRSegXLarge's large, previously-unexplained divergence,
-// see docs/decisions/0001-open-work.md -- ~102/300 queries' delta_wh
-// exceeds the clamp for that model+input, so the two versions genuinely
-// disagree, not because of a bug in either one).
+// trainable: selects the backward-capable primitive-decomposed version of
+// every op in this function that has one, needed wherever the result must
+// flow into a backward pass (docs/decisions/0003-training.md):
+// - Every LayerNorm (self-attn/cross-attn/FFN norms + decoder.norm +
+//   enc_output_norm.0) uses layer_norm_affine_diff instead of
+//   layer_norm_affine (ggml_norm has no backward case at all).
+// - The final pred_boxes decode uses bbox_reparam_decode_diff (SET-based,
+//   clamps delta_wh to [-4,4] before exp -- needed because ggml_concat has
+//   no backward case) instead of the ORIGINAL bbox_reparam_decode
+//   (CONCAT-based, no clamp). If false (default), the original is used --
+//   this matches upstream's exact unclamped
+//   `outputs_coord_wh = delta.exp() * ref_wh` numerically, including its
+//   float32 exp-underflow-to-EXACTLY-0 behavior for extreme delta values.
+//   The clamp is a genuine, deliberate training-time numerical-safety
+//   measure, not an inference-time correctness fix -- applying it
+//   unconditionally silently diverges from upstream whenever delta_wh
+//   legitimately exceeds +-4 (confirmed: this is exactly what was behind
+//   RFDETRSegXLarge's large, previously-unexplained divergence, see
+//   docs/decisions/0001-open-work.md -- ~102/300 queries' delta_wh exceeds
+//   the clamp for that model+input, so the two versions genuinely
+//   disagree, not because of a bug in either one).
+// Every _diff primitive is numerically identical to its fused counterpart
+// for inference (tests/test_norm_backward.cpp), so `trainable=false`
+// (default) has zero effect on any existing inference path.
+// ms_deform_attn's own backward (Finding 3) is resolved directly in
+// third_party/ggml/src/ggml.c (floor/clamp backward cases added), not
+// gated behind this flag -- it's always backward-capable now.
 DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParams & p,
                              ggml_tensor * topk_idx_override = nullptr,
                              const KeypointParams * kp = nullptr, ggml_tensor * kp_memory = nullptr,
-                             bool trainable_boxes = false);
+                             bool trainable = false);

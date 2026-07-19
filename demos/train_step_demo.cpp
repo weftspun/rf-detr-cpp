@@ -170,7 +170,7 @@ static GraphHandles build_graph(Model & m, const TrainableHead & head, const std
     ggml_tensor * memory = ggml_reshape_3d(g.ctx, fused, NANO_DP.gw * NANO_DP.gh, NANO_DP.hidden_dim, 1);
     memory = ggml_cont(g.ctx, ggml_permute(g.ctx, memory, 1, 0, 2, 3));
 
-    DecoderOutput dout = rfdetr_decoder(m, memory, NANO_DP, nullptr, nullptr, nullptr, /*trainable_boxes=*/trainable);
+    DecoderOutput dout = rfdetr_decoder(m, memory, NANO_DP, nullptr, nullptr, nullptr, /*trainable=*/trainable);
     g.pred_boxes = dout.pred_boxes;
     g.pred_logits = dout.pred_logits;
 
