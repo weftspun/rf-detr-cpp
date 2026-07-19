@@ -18,6 +18,63 @@ std::vector<float> output_proposals_data(int gw, int gh) {
     return out;
 }
 
+static bool proposal_valid(const float * p) {
+    for (int i = 0; i < 4; i++) {
+        if (!(p[i] > 0.01f && p[i] < 0.99f)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<float> output_proposals_data_multilevel(const std::vector<std::pair<int, int>> & levels) {
+    int64_t total = 0;
+    for (auto & lv : levels) {
+        total += (int64_t) lv.first * lv.second;
+    }
+    std::vector<float> out((size_t) total * 4);
+    size_t off = 0;
+    for (size_t lvl = 0; lvl < levels.size(); lvl++) {
+        const int gw = levels[lvl].first, gh = levels[lvl].second;
+        const float wh = 0.05f * (float) (1 << lvl); // 0.05 * 2^lvl
+        for (int row = 0; row < gh; row++) {
+            for (int col = 0; col < gw; col++) {
+                float * p = &out[(off + (size_t) row * gw + col) * 4];
+                p[0] = (col + 0.5f) / gw;
+                p[1] = (row + 0.5f) / gh;
+                p[2] = wh;
+                p[3] = wh;
+                if (!proposal_valid(p)) {
+                    p[0] = p[1] = p[2] = p[3] = 0.0f;
+                }
+            }
+        }
+        off += (size_t) gw * gh;
+    }
+    return out;
+}
+
+std::vector<float> valid_mask_data_multilevel(const std::vector<std::pair<int, int>> & levels) {
+    int64_t total = 0;
+    for (auto & lv : levels) {
+        total += (int64_t) lv.first * lv.second;
+    }
+    std::vector<float> mask((size_t) total);
+    size_t off = 0;
+    for (size_t lvl = 0; lvl < levels.size(); lvl++) {
+        const int gw = levels[lvl].first, gh = levels[lvl].second;
+        const float wh = 0.05f * (float) (1 << lvl);
+        for (int row = 0; row < gh; row++) {
+            for (int col = 0; col < gw; col++) {
+                float p[4] = { (col + 0.5f) / gw, (row + 0.5f) / gh, wh, wh };
+                mask[off + (size_t) row * gw + col] = proposal_valid(p) ? 1.0f : 0.0f;
+            }
+        }
+        off += (size_t) gw * gh;
+    }
+    return mask;
+}
+
 // (cx,cy,w,h)-reparam box decode: cxcy = delta[:2]*base_wh + base_cxcy,
 // wh = exp(delta[2:])*base_wh. delta/base are (4,T,N).
 static ggml_tensor * bbox_reparam_decode(ggml_context * ctx, ggml_tensor * delta, ggml_tensor * base) {
@@ -52,15 +109,36 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
                              ggml_tensor * topk_idx_override,
                              const KeypointParams * kp, ggml_tensor * kp_memory) {
     ggml_context * ctx = m.ctx_g;
-    const int gwh = p.gw * p.gh;
+    const bool multilevel = !p.levels.empty();
+    int gwh = p.gw * p.gh;
+    if (multilevel) {
+        gwh = 0;
+        for (auto & lv : p.levels) {
+            gwh += lv.first * lv.second;
+        }
+    }
     const int hd = p.hidden_dim;
 
     ggml_tensor * proposals = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 4, gwh, 1);
     ggml_set_name(proposals, "output_proposals");
     ggml_set_input(proposals);
 
+    // Multi-level only: mask `memory` (zero tokens whose grid-cell proposal
+    // fell outside (0.01,0.99), see output_proposals_data_multilevel) before
+    // the two-stage proposal heads -- matches upstream's
+    // output_memory.masked_fill(~valid,0). Deformable cross-attention below
+    // still reads the RAW (unmasked) `memory`, matching upstream exactly.
+    ggml_tensor * valid_mask = nullptr;
+    ggml_tensor * memory_for_proposals = memory;
+    if (multilevel) {
+        valid_mask = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, gwh, 1);
+        ggml_set_name(valid_mask, "valid_mask");
+        ggml_set_input(valid_mask);
+        memory_for_proposals = ggml_mul(ctx, memory, valid_mask); // broadcasts (1,gwh,1) over (hd,gwh,1)
+    }
+
     // two-stage encoder proposals (group 0 only; group_detr is a no-op at inference)
-    ggml_tensor * output_memory = layer_norm_affine(m, linear(m, memory, "enc_output.0"), "enc_output_norm.0");
+    ggml_tensor * output_memory = layer_norm_affine(m, linear(m, memory_for_proposals, "enc_output.0"), "enc_output_norm.0");
     ggml_tensor * enc_class = linear(m, output_memory, "enc_out_class_embed.0");     // (num_classes, gwh, 1)
     ggml_tensor * enc_delta = mlp(m, output_memory, "enc_out_bbox_embed.0", 3);      // (4, gwh, 1)
     ggml_tensor * enc_boxes = bbox_reparam_decode(ctx, enc_delta, proposals);        // (4, gwh, 1)
@@ -140,8 +218,11 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
         tgt_cur = layer_norm_affine(m, ggml_add(ctx, tgt_cur, self_out), pre + "norm1");
 
         ggml_tensor * cross_q = ggml_add(ctx, tgt_cur, query_pos);
-        ggml_tensor * cross_out = ms_deform_attn(m, cross_q, memory, ref_points, pre + "cross_attn",
-                                                 p.ca_nheads, p.dec_n_points, p.gw, p.gh);
+        ggml_tensor * cross_out = multilevel
+            ? ms_deform_attn_multilevel(m, cross_q, memory, ref_points, pre + "cross_attn",
+                                        p.ca_nheads, p.dec_n_points, p.levels)
+            : ms_deform_attn(m, cross_q, memory, ref_points, pre + "cross_attn",
+                             p.ca_nheads, p.dec_n_points, p.gw, p.gh);
         tgt_cur = layer_norm_affine(m, ggml_add(ctx, tgt_cur, cross_out), pre + "norm2");
 
         ggml_tensor * ff = linear(m, tgt_cur, pre + "linear1");
@@ -178,6 +259,7 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
     ggml_tensor * bbox_delta = mlp(m, final_hs, "bbox_embed", 3);
     out.pred_boxes = bbox_reparam_decode(ctx, bbox_delta, ref_points);
     out.output_proposals = proposals;
+    out.valid_mask = valid_mask;
     out.hidden_states = out_hs;
 
     if (kp) {
