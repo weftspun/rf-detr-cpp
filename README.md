@@ -29,6 +29,7 @@ consolidated open-task checklist across all milestones.
 | **RFDETRBase object detection end-to-end** | `test_decoder_base` | boxes 1.1e-3, logits 7.2e-4 |
 | **RFDETRSmall object detection end-to-end** | `test_decoder_small` | boxes 4.5e-4, logits 9.3e-4 |
 | **RFDETRMedium object detection end-to-end** | `test_decoder_medium` | boxes 1.8e-3, logits 2.2e-3 |
+| **RFDETRLarge object detection end-to-end** | `test_decoder_large` | boxes 1.5e-3, logits 1.8e-3 |
 
 **All three inference milestones are done for the Nano-family variants:
 object detection, instance segmentation, and keypoint detection.** Now

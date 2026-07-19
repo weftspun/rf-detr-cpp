@@ -56,7 +56,15 @@ MEDIUM = dict(
     out_feature_indexes_raw=[3, 6, 9, 12],
 )
 
-VARIANTS = {"nano": NANO, "base": BASE, "small": SMALL, "medium": MEDIUM}
+# RFDETRLargeConfig (current): same Nano-family backbone, resolution=704 (grid 44).
+LARGE = dict(
+    hidden_size=384, num_hidden_layers=12, num_attention_heads=6,
+    patch_size=16, num_register_tokens=0, num_windows=2,
+    image_size=704, resolution=704,
+    out_feature_indexes_raw=[3, 6, 9, 12],
+)
+
+VARIANTS = {"nano": NANO, "base": BASE, "small": SMALL, "medium": MEDIUM, "large": LARGE}
 
 
 def write_arr(f, arr: np.ndarray):

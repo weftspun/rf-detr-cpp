@@ -57,16 +57,21 @@ what was open and when it closed.
       `medium_coco/checkpoint_best_regular.pth` (MD5 confirmed). Same
       pattern as Small: resolution 576 (grid 36), `dec_layers=4`, no code
       changes.
+- [x] RFDETRLarge (current, non-deprecated) validated end-to-end
+      (`test_decoder_large`: boxes 1.5e-3, logits 1.8e-3) —
+      checkpoint-verified against `rf-detr-large-2026.pth` (MD5 confirmed).
+      Same pattern as Small/Medium: resolution 704 (grid 44), `dec_layers=4`,
+      no code changes.
 - [ ] There is no detection XL/2XL variant upstream — only Nano, Small,
       Medium, Base, Large, and LargeDeprecated exist for detection (XL/2XL
-      only exist for segmentation). Remaining unvalidated detection sizes:
-      Large (patch16, res704, dec_layers4 — same pattern as Small/Medium,
-      should be a pure config extension), LargeDeprecated (patch14 like
-      Base, but **768-wide backbone AND `projector_scale=['P3','P5']` →
-      `num_feature_levels=2`** — the one variant needing real new code,
-      since every other variant validated so far is single-feature-level;
+      only exist for segmentation). **Every remaining detection size is
+      now validated except LargeDeprecated**, which needs real new code:
+      patch_size==14 (like Base) but **768-wide backbone AND
+      `projector_scale=['P3','P5']` → `num_feature_levels=2`** — every
+      variant validated so far (including Base) is single-feature-level;
       deformable cross-attention's `n_levels` dimension is currently
-      unexercised beyond 1).
+      unexercised beyond 1, so this needs real `src/deform_attn.cpp` work,
+      not just a config-table addition.
 - [ ] Multi-image batching (N>1) not supported — `backbone.cpp`'s
       windowed/global merge-reshape trick assumes a single image per graph
 
