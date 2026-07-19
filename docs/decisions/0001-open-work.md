@@ -177,6 +177,30 @@ what was open and when it closed.
       committed and ready to re-validate once fixed. Seg2XLarge (even
       larger, 768 res) is likely to hit the same issue and should wait for
       this to be root-caused first.
+      - **Follow-up (later session): the buffer-reuse hypothesis above is
+        now RULED OUT.** Two experiments: (1) added `ggml_set_output` on
+        `memory`/`output_memory`/`enc_class`/`enc_delta`/`enc_boxes` in
+        `rfdetr_decoder` (the exact tensors named above) — result
+        bit-identical to the unprotected baseline (max-abs-diff 0.996435 /
+        3.445064 / 59.475949, to 6 decimal places, unchanged). (2) Went
+        further and blanket-`ggml_set_output`'d **every one of the 18972
+        nodes** in the full graph before allocation (a real per-run
+        `train_step_demo.cpp`-style AdamW param-buffer-reuse bug WAS found
+        and fixed this session — see `0003-training.md` — so this class of
+        bug is real elsewhere in the codebase, which is why it was worth
+        re-testing here) — still bit-identical. If buffer reuse were the
+        cause, protecting literally every node would have to change the
+        result; it didn't. The corruption is a genuine numerical/logic bug
+        specific to this configuration (dec_layers=6, 2704 tokens — the
+        only decoder in this project with 6 layers), not an allocator
+        issue. Ruled out as NOT the cause: `SegmentationParams::num_blocks`
+        mismatch (checked, matches `dec_layers=6`), missing
+        `decoder.layers.5.*` GGUF weights (checked — GGUF has layers 0-5,
+        all present). Next place to look: something layer-count- or
+        token-count-dependent inside the per-layer decoder loop itself
+        (self-attn/cross-attn/FFN), not the two-stage proposal heads this
+        session's investigation focused on — those were checkpoint- and
+        buffer-reuse-ruled-out already.
 - [x] RFDETRSegPreview validated end-to-end (`test_segmentation_preview`:
       boxes 4.7e-4, logits 1.6e-3, masks 5.6e-2 against the 0.15 gate) —
       checkpoint-verified against `rf-detr-seg-preview.pt` (MD5 confirmed).
