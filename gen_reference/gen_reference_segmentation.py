@@ -16,12 +16,19 @@ import sys
 
 import numpy as np
 import torch
-from rfdetr.config import RFDETRSegNanoConfig, RFDETRSegSmallConfig
+from rfdetr.config import (
+    RFDETRSegLargeConfig, RFDETRSegMediumConfig, RFDETRSegNanoConfig, RFDETRSegSmallConfig,
+    RFDETRSegXLargeConfig, RFDETRSeg2XLargeConfig,
+)
 from rfdetr.models.lwdetr import build_model_from_config
 
 CONFIGS = {
-    "seg-nano": (RFDETRSegNanoConfig, 312),
-    "seg-small": (RFDETRSegSmallConfig, 384),
+    "seg-nano": (RFDETRSegNanoConfig, 312, 100),
+    "seg-small": (RFDETRSegSmallConfig, 384, 100),
+    "seg-medium": (RFDETRSegMediumConfig, 432, 200),
+    "seg-large": (RFDETRSegLargeConfig, 504, 200),
+    "seg-xlarge": (RFDETRSegXLargeConfig, 624, 300),
+    "seg-2xlarge": (RFDETRSeg2XLargeConfig, 768, 300),
 }
 
 
@@ -36,7 +43,7 @@ def main():
     ckpt_path = sys.argv[1] if len(sys.argv) > 1 else "models/rf-detr-seg-nano.pt"
     out_path = sys.argv[2] if len(sys.argv) > 2 else "gen_reference/reference_segmentation_nano.bin"
     variant = sys.argv[3] if len(sys.argv) > 3 else "seg-nano"
-    config_cls, res = CONFIGS[variant]
+    config_cls, res, num_queries = CONFIGS[variant]
 
     cfg = config_cls(pretrain_weights=None, device="cpu")
     model = build_model_from_config(cfg)
@@ -54,7 +61,7 @@ def main():
 
     def spy_topk(*args, **kwargs):
         result = orig_topk(*args, **kwargs)
-        if "topk_idx" not in captured and args and args[0].dim() == 2 and args[0].shape[-1] > 100:
+        if "topk_idx" not in captured and args and args[0].dim() == 2 and args[0].shape[-1] > num_queries:
             captured["topk_idx"] = result.indices.clone()
         return result
 
