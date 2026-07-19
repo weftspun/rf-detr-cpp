@@ -53,6 +53,17 @@ struct DecoderOutput {
                                               // segmentation head (one block per decoder layer).
     ggml_tensor * pred_keypoints = nullptr; // (8, num_kp, num_queries, 1), only set when a
                                             // KeypointParams was passed to rfdetr_decoder.
+
+    // Debug taps (docs/decisions/0001-open-work.md's SegXLarge investigation)
+    // -- always populated, not gated behind a flag, since they're cheap
+    // (no extra ggml ops, just exposing existing internal tensors).
+    ggml_tensor * dbg_ts_boxes = nullptr;   // (4, num_queries, 1) -- top-k-selected two-stage proposal boxes
+    ggml_tensor * dbg_ref_points = nullptr; // (4, num_queries, 1) -- fixed reference points fed to every decoder layer
+    ggml_tensor * dbg_enc_boxes = nullptr;  // (4, gwh, 1) -- ALL two-stage proposal boxes, before top-k gather
+    ggml_tensor * dbg_enc_delta = nullptr;  // (4, gwh, 1) -- enc_out_bbox_embed's raw MLP output, before decode
+    ggml_tensor * dbg_topk_idx = nullptr;   // (num_queries,) I32 -- the actual indices used for the gather
+    ggml_tensor * dbg_bbox_delta = nullptr; // (4, num_queries, 1) -- bbox_embed's raw MLP output, before final decode
+    ggml_tensor * dbg_final_hs = nullptr;   // (hidden_dim, num_queries, 1) -- last decoder layer's normed output
 };
 
 // Host-side constant matching gen_encoder_output_proposals (single level, no
@@ -93,6 +104,22 @@ struct KeypointParams; // src/keypoints.h
 // then also be non-null -- the dual projector's second (gw,gh,hidden_dim,1)
 // feature map, flattened the same way as `memory`. Not supported together
 // with p.levels (no multi-level keypoint variant exists upstream).
+// trainable_boxes: if true, the final pred_boxes decode uses
+// bbox_reparam_decode_diff (SET-based, clamps delta_wh to [-4,4] before
+// exp -- needed because ggml_concat has no backward case, see
+// docs/decisions/0003-training.md). If false (default), uses the ORIGINAL
+// bbox_reparam_decode (CONCAT-based, no clamp) -- this matches upstream's
+// exact unclamped `outputs_coord_wh = delta.exp() * ref_wh` numerically,
+// including its float32 exp-underflow-to-EXACTLY-0 behavior for extreme
+// delta values. The clamp is a genuine, deliberate training-time
+// numerical-safety measure, not an inference-time correctness fix --
+// applying it unconditionally silently diverges from upstream whenever
+// delta_wh legitimately exceeds +-4 (confirmed: this is exactly what was
+// behind RFDETRSegXLarge's large, previously-unexplained divergence,
+// see docs/decisions/0001-open-work.md -- ~102/300 queries' delta_wh
+// exceeds the clamp for that model+input, so the two versions genuinely
+// disagree, not because of a bug in either one).
 DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParams & p,
                              ggml_tensor * topk_idx_override = nullptr,
-                             const KeypointParams * kp = nullptr, ggml_tensor * kp_memory = nullptr);
+                             const KeypointParams * kp = nullptr, ggml_tensor * kp_memory = nullptr,
+                             bool trainable_boxes = false);

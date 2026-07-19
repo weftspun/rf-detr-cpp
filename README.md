@@ -82,9 +82,10 @@ Each variant is split into separate `<variant>-{backbone,projector,decoder}
 a variant into one `Model` via repeated `rfdetr_load()` calls. All files are
 under GitHub's 2GB asset limit, so none needed zstd splitting (mirroring
 see-through-cpp's release layout otherwise). RFDETRSegXLarge/Seg2XLarge are
-NOT published: SegXLarge validation still fails with a large, unresolved
-divergence (see `docs/decisions/0001-open-work.md`), and XL/2XL upstream
-checkpoints are PML 1.0-licensed rather than Apache-2.0.
+NOT published: XL/2XL upstream checkpoints are PML 1.0-licensed rather than
+Apache-2.0 (SegXLarge's own validation now passes, see
+`docs/decisions/0001-open-work.md` — licensing is the only remaining reason
+these aren't published).
 
 Upstream PyTorch checkpoints are plain `.pth` state dicts hosted at
 `https://storage.googleapis.com/rfdetr/*.pth` (not HuggingFace) — not

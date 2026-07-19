@@ -9,6 +9,17 @@ Usage:
     uv run --with torch --with numpy --with rfdetr \
         gen_reference/gen_reference_segmentation.py models/rf-detr-seg-nano.pt \
         gen_reference/reference_segmentation_nano.bin
+
+Pass a 6th argument (a real image path) to use a REAL, in-distribution
+image instead of synthetic torch.randn noise -- see
+docs/decisions/0001-open-work.md's SegXLarge root-cause writeup: synthetic
+noise pushes some queries' delta_wh to values extreme enough that
+exp(delta_wh) underflows to EXACTLY 0.0 in float32, a genuinely unstable
+boundary condition where two independently-correct float32
+implementations (this port's C++ and upstream's PyTorch) can legitimately
+disagree on whether a given query's box is "exactly zero" vs "extremely
+small but nonzero" -- not a real correctness bug in either, but it makes
+synthetic-noise references unusable for exact-match validation.
 """
 import os
 import struct
@@ -51,6 +62,7 @@ def main():
     ckpt_path = sys.argv[1] if len(sys.argv) > 1 else "models/rf-detr-seg-nano.pt"
     out_path = sys.argv[2] if len(sys.argv) > 2 else "gen_reference/reference_segmentation_nano.bin"
     variant = sys.argv[3] if len(sys.argv) > 3 else "seg-nano"
+    real_image_path = sys.argv[4] if len(sys.argv) > 4 else None
     config_cls, res, num_queries = CONFIGS[variant]
 
     cfg = config_cls(pretrain_weights=None, device="cpu", num_queries=num_queries)
@@ -75,8 +87,17 @@ def main():
 
     torch.topk = spy_topk
     try:
-        torch.manual_seed(0)
-        pixel_values = torch.randn(1, 3, res, res, dtype=torch.float32)
+        if real_image_path:
+            from PIL import Image
+            image = Image.open(real_image_path).convert("RGB").resize((res, res), Image.BILINEAR)
+            arr = np.asarray(image, dtype=np.float32) / 255.0  # (res,res,3)
+            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+            arr = (arr - mean) / std
+            pixel_values = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).contiguous()
+        else:
+            torch.manual_seed(0)
+            pixel_values = torch.randn(1, 3, res, res, dtype=torch.float32)
         with torch.no_grad():
             out = model(pixel_values)
     finally:

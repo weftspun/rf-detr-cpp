@@ -138,7 +138,7 @@ static ggml_tensor * sine_embed_1coord(ggml_context * ctx, ggml_tensor * v, ggml
 
 DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParams & p,
                              ggml_tensor * topk_idx_override,
-                             const KeypointParams * kp, ggml_tensor * kp_memory) {
+                             const KeypointParams * kp, ggml_tensor * kp_memory, bool trainable_boxes) {
     ggml_context * ctx = m.ctx_g;
     const bool multilevel = !p.levels.empty();
     int gwh = p.gw * p.gh;
@@ -153,6 +153,20 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
     ggml_tensor * proposals = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 4, gwh, 1);
     ggml_set_name(proposals, "output_proposals");
     ggml_set_input(proposals);
+    // Also protect from the graph allocator's buffer-reuse: `ggml_set_input`
+    // alone does NOT stop a leaf tensor's buffer from being handed to a
+    // later node's output -- only `ggml_set_output` does that (see
+    // ggml-alloc.c's `ggml_gallocr_free_node`, which only special-cases
+    // GGML_TENSOR_FLAG_OUTPUT). Worse, leaf tensors like this one aren't
+    // reachable via `ggml_graph_node()`/`ggml_graph_n_nodes()` (those only
+    // iterate computed nodes), so a "protect every node" sweep silently
+    // misses them -- this is exactly what let the RFDETRSegXLarge
+    // divergence (docs/decisions/0001-open-work.md) survive an earlier
+    // blanket-protection experiment: found by tracing `topk_override`
+    // (the analogous caller-created leaf in tests/test_segmentation_xlarge.cpp)
+    // reading back as pure garbage int32 values on that graph's 18819+ nodes,
+    // then finding this tensor has the exact same unprotected-leaf shape.
+    ggml_set_output(proposals);
 
     // Multi-level only: mask `memory` (zero tokens whose grid-cell proposal
     // fell outside (0.01,0.99), see output_proposals_data_multilevel) before
@@ -165,6 +179,7 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
         valid_mask = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, gwh, 1);
         ggml_set_name(valid_mask, "valid_mask");
         ggml_set_input(valid_mask);
+        ggml_set_output(valid_mask); // same leaf-buffer-reuse protection as `proposals` above
         memory_for_proposals = ggml_mul(ctx, memory, valid_mask); // broadcasts (1,gwh,1) over (hd,gwh,1)
     }
 
@@ -294,10 +309,22 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
     DecoderOutput out;
     ggml_tensor * class_logits = linear(m, final_hs, "class_embed");
     ggml_tensor * bbox_delta = mlp(m, final_hs, "bbox_embed", 3);
-    out.pred_boxes = bbox_reparam_decode_diff(ctx, bbox_delta, ref_points); // backward-capable, see above
+    // trainable_boxes selects backward-capable (clamped, diverges from
+    // upstream only when delta_wh is extreme) vs the exact-match default
+    // -- see decoder.h's docstring and docs/decisions/0001-open-work.md's
+    // SegXLarge root-cause writeup.
+    out.pred_boxes = trainable_boxes ? bbox_reparam_decode_diff(ctx, bbox_delta, ref_points)
+                                     : bbox_reparam_decode(ctx, bbox_delta, ref_points);
     out.output_proposals = proposals;
     out.valid_mask = valid_mask;
     out.hidden_states = out_hs;
+    out.dbg_ts_boxes = ts_boxes;
+    out.dbg_ref_points = ref_points;
+    out.dbg_enc_boxes = enc_boxes;
+    out.dbg_enc_delta = enc_delta;
+    out.dbg_topk_idx = topk_idx;
+    out.dbg_bbox_delta = bbox_delta;
+    out.dbg_final_hs = final_hs;
 
     if (kp) {
         KeypointHeadOutput kdec = keypoint_final_decode(m, out_kp.back(), ref_points, kp->num_kp,
