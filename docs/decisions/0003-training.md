@@ -1,6 +1,8 @@
 # 3. Phase-2 finetuning/training — design research + LayerNorm backward fix
 
-* Status: in progress (backward prerequisite done, scope decided, loss/matching/dataloader not yet implemented)
+* Status: in progress (backward prerequisite done, scope decided, loss/matching
+  implemented and validated, end-to-end demo working with a known synthetic-input
+  numerical caveat, dataloader/optimizer-loop not yet implemented)
 * Date: 2026-07-18
 
 ## Context and Problem Statement
@@ -214,10 +216,79 @@ Remaining steps for this scope, in order:
    alternative (not something invented for this port), just not the
    default.
 
-2. Dataset/dataloader (COCO-format annotations → ggml input tensors) — not
-   researched yet.
-3. `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring (Finding 1's existing
-   framework) once 2 lands.
+2. **Done (with a caveat).** End-to-end training-step demo
+   (`demos/train_step_demo.cpp`): loads the real RFDETRNano checkpoint,
+   runs the full frozen backbone→projector→decoder forward pass, matches
+   against a synthetic target via `hungarian_match`, builds
+   `detection_loss`, backprops, and applies a manual AdamW update (same
+   formula/parameter layout as `ggml_opt_step_adamw`'s own CPU kernel,
+   hand-rolled rather than using the graph op directly — see the note
+   below) to `class_embed`/`bbox_embed` only. Proves the FULL scope-decided
+   plumbing genuinely composes: weight-shadowing a `Model`'s frozen GGUF
+   tensors with fresh per-step trainable ones (via `m.weights[name] = t`),
+   two fresh graphs per step (forward-only for matching, then forward+loss
+   +backward+AdamW), carrying updated weights host-side between steps.
+
+   Two more real bugs found and fixed while building this (beyond the
+   `mean(1)` and `ggml_sigmoid` ones already listed above):
+   - **`ggml_concat` has no backward case** (same gap class as
+     `ggml_norm`/`ggml_sigmoid`) — `bbox_reparam_decode`'s final
+     `ggml_concat(cxcy, wh, 0)` assembly of `pred_boxes` aborted the
+     process the instant `bbox_embed`'s output needed a gradient through
+     it. Fixed with `bbox_reparam_decode_diff` (`src/decoder.cpp`), which
+     assembles the same result via two `ggml_set` calls instead (SET *is*
+     backward-capable) — forward-identical, confirmed by swapping it in
+     unconditionally at the one call site that builds `pred_boxes` and
+     re-running all 7 existing decoder/segmentation/keypoint inference
+     tests with zero regression.
+   - **MSVC Debug-build assertion failures pop a blocking interactive
+     dialog** instead of exiting — fatal for a headless run (stdin is
+     `/dev/null`, so the dialog just hangs forever; this is almost
+     certainly what an earlier session's "hung modal" report was too,
+     from the antialias+bicubic assert). Fixed by calling
+     `_CrtSetReportMode`/`_CrtSetReportFile` (routing asserts to stderr)
+     and `_set_abort_behavior` (disabling the abort-message-box and
+     Windows Error Reporting) at the top of `main()`, guarded by
+     `#if defined(_MSC_VER) || defined(_WIN32)`.
+
+   **Known caveat, not fixed**: the demo's *forward-only sanity check*
+   (loss must be finite and under 1e6) reliably trips on step 1, because
+   the demo feeds a fixed SYNTHETIC random-noise image (not a real photo)
+   into a frozen, pretrained decoder that was never trained on
+   out-of-distribution input like that. The resulting logits/box-deltas
+   are large enough that the AGGREGATE loss (summed over 300 queries × 91
+   classes) reaches ~1e26–1e27 even with per-element clamps in place
+   (`clamp_diff` bounding `sigmoid`'s output away from exactly 0/1 before
+   `log`, and bounding `delta_wh` before `exp` in
+   `bbox_reparam_decode_diff`) — those clamps bound each ELEMENT, not the
+   SUM's magnitude, and 27300 elements at even a moderate per-element
+   value can sum to something huge. Tried scaling the synthetic image down
+   (0.3x) — value changed but stayed astronomically large, ruling out
+   simple input-scale as the cause; a real amplification path through the
+   frozen backbone/decoder for structured (windowed-attention) input that
+   never resembles a real photo. This is a property of the SYNTHETIC DEMO
+   INPUT, not a bug in `detection_loss` itself, which is independently
+   validated (forward exact-match to 2e-6, backward gradient correct via
+   finite-difference) against REAL upstream reference values on
+   controlled synthetic logits/boxes in `tests/test_loss.cpp` — that
+   validation doesn't depend on or share this demo's frozen-model-fed-
+   noise numerical fragility. The demo detects this (a finite/magnitude
+   guard) and stops cleanly rather than propagating garbage into more
+   steps. A real training loop feeding real images (once the dataloader
+   below exists) shouldn't hit this, since the whole point of starting
+   from a pretrained checkpoint is that it already produces sane
+   predictions for in-distribution input.
+
+3. Dataset/dataloader (COCO-format annotations → ggml input tensors) — not
+   researched yet. Would also resolve the demo's synthetic-input caveat
+   above by giving it real images to train on.
+4. `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring — the demo currently
+   hand-rolls the identical AdamW math as a host-side loop rather than
+   using the real graph op, specifically to sidestep the "second real ggml
+   training-infra gap" below (a graph op would need to be part of the
+   SAME single-compute graph as forward+backward, adding complexity for
+   uncertain benefit given that gap's root cause isn't understood yet).
+   Worth revisiting once that's root-caused.
 
 ## A second real ggml training-infra gap found: repeated graph execution
 

@@ -88,6 +88,37 @@ static ggml_tensor * bbox_reparam_decode(ggml_context * ctx, ggml_tensor * delta
     return ggml_concat(ctx, cxcy, wh, 0);
 }
 
+// Same as bbox_reparam_decode, but assembled via ggml_set instead of
+// ggml_concat -- CONCAT has NO backward case at all (same class of gap as
+// ggml_norm/ggml_sigmoid; see docs/decisions/0003-training.md), which
+// aborted the process the moment a real training step needed a gradient
+// through pred_boxes = bbox_reparam_decode(bbox_embed_output, ref_points).
+// SET's backward IS implemented. `base` is used as the destination
+// template purely for its (4,T,N) shape/strides -- it never needs its own
+// gradient here (ref_points isn't a trainable tensor in the detection-
+// head-only scope), so ggml's dependency analysis skips computing one for
+// it, same as layer_norm_affine_diff leaving layer_norm_affine untouched
+// for inference-only paths. Numerically identical to bbox_reparam_decode;
+// use that one for inference/frozen paths (marginally cheaper, one op
+// instead of two), this one wherever the result must flow into backward.
+static ggml_tensor * bbox_reparam_decode_diff(ggml_context * ctx, ggml_tensor * delta, ggml_tensor * base) {
+    ggml_tensor * base_cxcy = ggml_cont(ctx, ggml_view_3d(ctx, base, 2, base->ne[1], base->ne[2], base->nb[1], base->nb[2], 0));
+    ggml_tensor * base_wh   = ggml_cont(ctx, ggml_view_3d(ctx, base, 2, base->ne[1], base->ne[2], base->nb[1], base->nb[2], 2 * sizeof(float)));
+    ggml_tensor * delta_cxcy = ggml_cont(ctx, ggml_view_3d(ctx, delta, 2, delta->ne[1], delta->ne[2], delta->nb[1], delta->nb[2], 0));
+    ggml_tensor * delta_wh   = ggml_cont(ctx, ggml_view_3d(ctx, delta, 2, delta->ne[1], delta->ne[2], delta->nb[1], delta->nb[2], 2 * sizeof(float)));
+
+    ggml_tensor * cxcy = ggml_add(ctx, ggml_mul(ctx, delta_cxcy, base_wh), base_cxcy);
+    // clamp delta_wh before exp(): an untrained/frozen head fed
+    // out-of-distribution input can produce a large enough delta_wh for
+    // exp() to overflow to +inf, propagating into the loss as garbage --
+    // +-4 covers any realistic trained-model box-size ratio (e^4 =~ 55x)
+    // with margin.
+    ggml_tensor * wh = ggml_mul(ctx, ggml_exp(ctx, clamp_diff(ctx, delta_wh, -4.0f, 4.0f)), base_wh);
+
+    ggml_tensor * result = ggml_set(ctx, base, cxcy, base->nb[1], base->nb[2], base->nb[3], 0);
+    return ggml_set(ctx, result, wh, base->nb[1], base->nb[2], base->nb[3], 2 * sizeof(float));
+}
+
 // gen_sineembed_for_position, one coordinate: v is (1,n_query,1); sine_scale
 // is the GGUF constant (1,dim) = 2*pi/dim_t. Returns (dim,n_query,1) with
 // interleaved sin(raw[2k])/cos(raw[2k+1]).
@@ -263,7 +294,7 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
     DecoderOutput out;
     ggml_tensor * class_logits = linear(m, final_hs, "class_embed");
     ggml_tensor * bbox_delta = mlp(m, final_hs, "bbox_embed", 3);
-    out.pred_boxes = bbox_reparam_decode(ctx, bbox_delta, ref_points);
+    out.pred_boxes = bbox_reparam_decode_diff(ctx, bbox_delta, ref_points); // backward-capable, see above
     out.output_proposals = proposals;
     out.valid_mask = valid_mask;
     out.hidden_states = out_hs;

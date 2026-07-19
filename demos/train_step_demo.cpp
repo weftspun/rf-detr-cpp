@@ -1,0 +1,351 @@
+// Demo: a genuinely working end-to-end training step for the Phase-2
+// detection-head-only finetune scope (docs/decisions/0003-training.md) --
+// DINOv2 backbone + transformer decoder frozen, only class_embed/
+// bbox_embed trainable. This is the capstone proving every backward-pass
+// piece built this phase (layer_norm_affine_diff, detection_loss's
+// sigmoid/focal/GIoU primitives, hungarian_match) actually composes into
+// a real trainable step against a REAL checkpoint (RFDETRNano), not just
+// synthetic isolation tests.
+//
+// Per-step structure (two separate ggml_backend_graph_compute calls, each
+// on a FRESH graph, since re-executing the SAME allocated graph more than
+// once was found to silently corrupt results -- see 0003-training.md's
+// "A second real ggml training-infra gap" note):
+//   1. Forward-only pass (current class_embed/bbox_embed weights) ->
+//      pred_boxes/pred_logits, read back to host for Hungarian matching
+//      against a fixed synthetic target.
+//   2. Forward + detection_loss + backward + one ggml_opt_step_adamw
+//      update per trainable tensor, computed once, updated weights read
+//      back to host and carried into the next step.
+//
+// Usage: build/train_step_demo.exe [n_steps=8] [lr=0.01]
+#include "backbone.h"
+#include "decoder.h"
+#include "loss.h"
+#include "projector.h"
+
+#include "ggml-alloc.h"
+#include "ggml-backend.h"
+#include "ggml-cpu.h"
+
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <random>
+
+#if defined(_MSC_VER) || defined(_WIN32)
+#include <crtdbg.h>
+#endif
+
+static const BackboneParams NANO_BP = [] {
+    BackboneParams p;
+    p.hidden = 384; p.n_layer = 12; p.n_head = 6; p.patch_size = 16; p.n_register = 0; p.num_windows = 2;
+    p.window_block_indexes = { 0, 1, 2, 4, 5, 7, 8, 10, 11 };
+    p.out_feature_indexes  = { 2, 5, 8, 11 };
+    return p;
+}();
+
+static const DecoderParams NANO_DP = [] {
+    DecoderParams p;
+    p.hidden_dim = 256; p.dec_layers = 2; p.sa_nheads = 8; p.ca_nheads = 16; p.dec_n_points = 2;
+    p.num_queries = 300; p.num_classes = 91; p.gw = 24; p.gh = 24;
+    return p;
+}();
+static const int64_t RES = 384;
+
+struct TrainableHead {
+    // class_embed: 1 linear (hidden_dim -> num_classes).
+    // bbox_embed: 3-layer MLP (hidden_dim -> hidden_dim -> hidden_dim -> 4).
+    std::vector<float> class_w, class_b;
+    std::vector<float> bbox_w[3], bbox_b[3];
+};
+
+// Extract the frozen checkpoint's own class_embed/bbox_embed as the
+// trainable head's INITIAL values (finetuning starts from the pretrained
+// weights, not from scratch).
+static TrainableHead extract_initial_head(Model & m, int hidden_dim, int num_classes) {
+    TrainableHead h;
+    auto copy_tensor = [&](const char * name, std::vector<float> & out) {
+        ggml_tensor * t = m.get(name);
+        out.resize(ggml_nelements(t));
+        memcpy(out.data(), t->data, out.size() * sizeof(float));
+    };
+    copy_tensor("class_embed.weight", h.class_w);
+    copy_tensor("class_embed.bias", h.class_b);
+    for (int i = 0; i < 3; i++) {
+        copy_tensor(("bbox_embed.layers." + std::to_string(i) + ".weight").c_str(), h.bbox_w[i]);
+        copy_tensor(("bbox_embed.layers." + std::to_string(i) + ".bias").c_str(), h.bbox_b[i]);
+    }
+    (void) hidden_dim; (void) num_classes;
+    return h;
+}
+
+// Builds one graph (backbone -> projector -> decoder -> pred_boxes/
+// pred_logits), with class_embed/bbox_embed's weights taken from `head`
+// (host floats, uploaded as fresh input tensors) instead of the frozen
+// GGUF-loaded ones -- m.weights is temporarily overridden so decoder.cpp's
+// existing linear()/mlp() calls pick them up transparently. If `trainable`
+// is set, those tensors are also ggml_set_param'd and a scalar loss is
+// built and returned as `out_loss`; otherwise only pred_boxes/pred_logits
+// are built (forward-only, for matching).
+struct GraphHandles {
+    ggml_context * ctx = nullptr;
+    ggml_backend_t backend = nullptr;
+    ggml_gallocr_t alloc = nullptr;
+    ggml_cgraph * gf = nullptr;
+    ggml_tensor * pred_boxes = nullptr;
+    ggml_tensor * pred_logits = nullptr;
+    ggml_tensor * loss = nullptr;
+    ggml_tensor * head_tensors[8] = {}; // class_w,class_b,bbox_w0,bbox_b0,bbox_w1,bbox_b1,bbox_w2,bbox_b2
+};
+
+static void free_graph(GraphHandles & g) {
+    if (g.alloc) ggml_gallocr_free(g.alloc);
+    if (g.backend) ggml_backend_free(g.backend);
+    if (g.ctx) ggml_free(g.ctx);
+    g = GraphHandles{};
+}
+
+static GraphHandles build_graph(Model & m, const TrainableHead & head, bool trainable,
+                                const DetectionTarget * tgt, const MatchResult * match) {
+    GraphHandles g;
+    size_t meta = ggml_tensor_overhead() * 200000 + ggml_graph_overhead_custom(200000, trainable);
+    ggml_init_params ip = { meta, nullptr, true };
+    g.ctx = ggml_init(ip);
+    m.ctx_g = g.ctx;
+
+    ggml_tensor * x = ggml_new_tensor_4d(g.ctx, GGML_TYPE_F32, RES, RES, 3, 1);
+    ggml_set_name(x, "pixel_values");
+    ggml_set_input(x);
+
+    auto make_head_tensor = [&](const char * name, int ne0, int ne1, bool is_2d) {
+        ggml_tensor * t = is_2d ? ggml_new_tensor_2d(g.ctx, GGML_TYPE_F32, ne0, ne1)
+                                : ggml_new_tensor_1d(g.ctx, GGML_TYPE_F32, ne0);
+        ggml_set_name(t, name);
+        ggml_set_input(t);
+        if (trainable) ggml_set_param(t);
+        m.weights[name] = t; // shadow the GGUF-loaded frozen tensor
+        return t;
+    };
+    const int hd = NANO_DP.hidden_dim, nc = NANO_DP.num_classes;
+    g.head_tensors[0] = make_head_tensor("class_embed.weight", hd, nc, true);
+    g.head_tensors[1] = make_head_tensor("class_embed.bias", nc, 0, false);
+    g.head_tensors[2] = make_head_tensor("bbox_embed.layers.0.weight", hd, hd, true);
+    g.head_tensors[3] = make_head_tensor("bbox_embed.layers.0.bias", hd, 0, false);
+    g.head_tensors[4] = make_head_tensor("bbox_embed.layers.1.weight", hd, hd, true);
+    g.head_tensors[5] = make_head_tensor("bbox_embed.layers.1.bias", hd, 0, false);
+    g.head_tensors[6] = make_head_tensor("bbox_embed.layers.2.weight", hd, 4, true);
+    g.head_tensors[7] = make_head_tensor("bbox_embed.layers.2.bias", 4, 0, false);
+
+    std::vector<ggml_tensor *> taps = dinov2_backbone(m, x, NANO_BP);
+    ggml_tensor * fused = projector_p4(m, taps, 256);
+    ggml_tensor * memory = ggml_reshape_3d(g.ctx, fused, NANO_DP.gw * NANO_DP.gh, NANO_DP.hidden_dim, 1);
+    memory = ggml_cont(g.ctx, ggml_permute(g.ctx, memory, 1, 0, 2, 3));
+
+    DecoderOutput dout = rfdetr_decoder(m, memory, NANO_DP);
+    g.pred_boxes = dout.pred_boxes;
+    g.pred_logits = dout.pred_logits;
+
+    if (trainable) {
+        g.loss = detection_loss(m, g.pred_logits, g.pred_boxes, *tgt, *match, NANO_DP.num_queries, NANO_DP.num_classes);
+        ggml_set_loss(g.loss);
+        // Explicitly protect this buffer from ggml's graph-allocator
+        // reuse -- the same class of bug already found and documented
+        // for the SegXLarge decoder graph and test_loss.cpp's repeated-
+        // execution case (see docs/decisions/0001-open-work.md /
+        // 0003-training.md) was reproduced here too: without this, the
+        // loss tensor's buffer got silently overwritten by a later graph
+        // node before being read out, returning garbage instead of the
+        // real computed value.
+        ggml_set_output(g.loss);
+    }
+    ggml_set_output(g.pred_boxes);
+    ggml_set_output(g.pred_logits);
+
+    g.gf = ggml_new_graph_custom(g.ctx, 200000, trainable);
+    ggml_build_forward_expand(g.gf, trainable ? g.loss : g.pred_boxes);
+    if (trainable) {
+        ggml_build_forward_expand(g.gf, g.pred_logits);
+        ggml_build_backward_expand(g.ctx, g.gf, nullptr);
+    } else {
+        ggml_build_forward_expand(g.gf, g.pred_logits);
+    }
+
+    g.backend = ggml_backend_cpu_init();
+    ggml_backend_cpu_set_n_threads(g.backend, 8);
+    g.alloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(g.backend));
+    if (!ggml_gallocr_alloc_graph(g.alloc, g.gf)) {
+        fprintf(stderr, "alloc failed\n");
+        exit(1);
+    }
+
+    // pixel_values: fixed synthetic image (seed 0), same every step -- a
+    // real training loop would feed a new image per step; this demo's
+    // point is the trainable-head plumbing, not a real dataset.
+    std::mt19937 rng(0);
+    std::normal_distribution<float> dist(0.0f, 1.0f);
+    std::vector<float> pixels((size_t) RES * RES * 3);
+    for (float & v : pixels) v = dist(rng) * 0.3f;
+    ggml_backend_tensor_set(x, pixels.data(), 0, pixels.size() * sizeof(float));
+
+    auto upload = [&](ggml_tensor * t, const std::vector<float> & v) {
+        ggml_backend_tensor_set(t, v.data(), 0, v.size() * sizeof(float));
+    };
+    upload(g.head_tensors[0], head.class_w); upload(g.head_tensors[1], head.class_b);
+    for (int i = 0; i < 3; i++) {
+        upload(g.head_tensors[2 + 2 * i], head.bbox_w[i]);
+        upload(g.head_tensors[3 + 2 * i], head.bbox_b[i]);
+    }
+
+    if (trainable) {
+        ggml_tensor * onehot = ggml_get_tensor(g.ctx, "loss_targets_onehot");
+        std::vector<float> onehot_data = targets_onehot_data(*match, *tgt, NANO_DP.num_queries, NANO_DP.num_classes);
+        ggml_backend_tensor_set(onehot, onehot_data.data(), 0, onehot_data.size() * sizeof(float));
+        if (!match->query_idx.empty()) {
+            ggml_tensor * midx = ggml_get_tensor(g.ctx, "loss_matched_query_idx");
+            std::vector<int32_t> midx_data = matched_query_idx_data(*match);
+            ggml_backend_tensor_set(midx, midx_data.data(), 0, midx_data.size() * sizeof(int32_t));
+            ggml_tensor * mtgt = ggml_get_tensor(g.ctx, "loss_matched_tgt_boxes");
+            std::vector<float> mtgt_data = matched_tgt_boxes_data(*match, *tgt);
+            ggml_backend_tensor_set(mtgt, mtgt_data.data(), 0, mtgt_data.size() * sizeof(float));
+        }
+    }
+
+    return g;
+}
+
+static void adamw_step(GraphHandles & g, float lr, int t, std::vector<std::vector<float>> & m_state,
+                       std::vector<std::vector<float>> & v_state) {
+    float params[7] = { lr, 0.9f, 0.999f, 1e-8f, 0.0f,
+                        1.0f / (1.0f - std::pow(0.9f, (float) t)), 1.0f / (1.0f - std::pow(0.999f, (float) t)) };
+    for (int i = 0; i < 8; i++) {
+        ggml_tensor * w = g.head_tensors[i];
+        ggml_tensor * grad = ggml_graph_get_grad(g.gf, w);
+        if (!grad) continue;
+        int64_t n = ggml_nelements(w);
+        std::vector<float> wv(n), gv(n);
+        ggml_backend_tensor_get(w, wv.data(), 0, n * sizeof(float));
+        ggml_backend_tensor_get(grad, gv.data(), 0, n * sizeof(float));
+        if ((int64_t) m_state[i].size() != n) { m_state[i].assign(n, 0.0f); v_state[i].assign(n, 0.0f); }
+        for (int64_t k = 0; k < n; k++) {
+            m_state[i][k] = m_state[i][k] * params[1] + gv[k] * (1.0f - params[1]);
+            v_state[i][k] = v_state[i][k] * params[2] + gv[k] * gv[k] * (1.0f - params[2]);
+            float mh = m_state[i][k] * params[5];
+            float vh = std::sqrt(v_state[i][k] * params[6]) + params[3];
+            wv[k] = wv[k] - params[0] * mh / vh;
+        }
+        // updated value written back into the SAME graph tensor; the
+        // caller reads it out afterward (readback in main()) to carry into
+        // the next step's fresh graph.
+        ggml_backend_tensor_set(w, wv.data(), 0, n * sizeof(float));
+    }
+}
+
+int main(int argc, char ** argv) {
+#if defined(_MSC_VER) || defined(_WIN32)
+    // Debug-build MSVC CRT pops a blocking "Debug Assertion Failed!"
+    // dialog on assert()/abort() instead of just exiting -- fatal for a
+    // headless run (stdin is /dev/null, so any interactive prompt just
+    // hangs forever). Route it to stderr instead so failures are visible
+    // and the process actually exits.
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+    int n_steps = argc > 1 ? atoi(argv[1]) : 8;
+    float lr = argc > 2 ? (float) atof(argv[2]) : 0.01f;
+
+    Model m;
+    if (!m.load("models/rf-detr-nano-backbone.gguf") ||
+        !m.load("models/rf-detr-nano-projector.gguf") ||
+        !m.load("models/rf-detr-nano-decoder.gguf")) {
+        fprintf(stderr, "failed to load models/rf-detr-nano-*.gguf (run scripts/convert_*.py first)\n");
+        return 1;
+    }
+
+    TrainableHead head = extract_initial_head(m, NANO_DP.hidden_dim, NANO_DP.num_classes);
+
+    // Fixed synthetic target: 2 boxes, arbitrary classes -- this demo
+    // proves the training PATH works end-to-end, not that it learns
+    // anything useful (no real dataset is wired up yet, see
+    // docs/decisions/0001-open-work.md's dataloader item).
+    DetectionTarget tgt;
+    tgt.labels = { 5, 17 };
+    tgt.boxes = { 0.3f, 0.4f, 0.2f, 0.25f, 0.7f, 0.6f, 0.15f, 0.3f };
+
+    std::vector<std::vector<float>> m_state(8), v_state(8);
+
+    printf("step  loss\n");
+    fflush(stdout);
+    for (int step = 1; step <= n_steps; step++) {
+        // --- pass 1: forward-only, get current predictions for matching ---
+        GraphHandles fwd = build_graph(m, head, /*trainable=*/false, nullptr, nullptr);
+        if (ggml_backend_graph_compute(fwd.backend, fwd.gf) != GGML_STATUS_SUCCESS) {
+            fprintf(stderr, "forward pass failed\n");
+            return 1;
+        }
+        std::vector<float> logits((size_t) NANO_DP.num_queries * NANO_DP.num_classes);
+        std::vector<float> boxes((size_t) NANO_DP.num_queries * 4);
+        ggml_backend_tensor_get(fwd.pred_logits, logits.data(), 0, logits.size() * sizeof(float));
+        ggml_backend_tensor_get(fwd.pred_boxes, boxes.data(), 0, boxes.size() * sizeof(float));
+        free_graph(fwd);
+
+        MatchResult match = hungarian_match(logits, boxes, NANO_DP.num_queries, NANO_DP.num_classes, tgt);
+        if (match.query_idx.size() != tgt.size()) {
+            fprintf(stderr, "step %d: only matched %zu/%zu targets (likely NaN-poisoned predictions from a "
+                            "prior step) -- stopping\n", step, match.query_idx.size(), tgt.size());
+            return 0;
+        }
+
+        // --- pass 2: forward + loss + backward + adamw, one compute call ---
+        GraphHandles trn = build_graph(m, head, /*trainable=*/true, &tgt, &match);
+        ggml_graph_reset(trn.gf);
+        if (ggml_backend_graph_compute(trn.backend, trn.gf) != GGML_STATUS_SUCCESS) {
+            fprintf(stderr, "train step failed\n");
+            return 1;
+        }
+        float loss_val;
+        ggml_backend_tensor_get(trn.loss, &loss_val, 0, sizeof(float));
+        printf("%4d  %.6f\n", step, loss_val);
+        // Defensive: this demo feeds a fixed SYNTHETIC random-noise image
+        // (not a real photo) into a frozen, pretrained decoder that was
+        // never trained on out-of-distribution input like that -- the
+        // resulting logits/box-deltas can legitimately be large enough
+        // that even the clamps in detection_loss/bbox_reparam_decode_diff
+        // (which bound the *per-element* log/exp inputs) don't prevent the
+        // *aggregate* loss from being enormous, and its gradient can then
+        // send AdamW-updated weights to NaN/Inf, corrupting every
+        // subsequent step. A real training loop feeding real images
+        // wouldn't hit this (the whole point of a pretrained checkpoint is
+        // that it already produces sane predictions for in-distribution
+        // input) -- stop here rather than propagate garbage into more
+        // steps and crash on a NaN-poisoned Hungarian match.
+        if (!std::isfinite(loss_val) || std::fabs(loss_val) > 1e6f) {
+            fprintf(stderr,
+                    "loss is non-finite or absurdly large (%.3e) -- likely from this demo's synthetic\n"
+                    "random-noise input, not a bug in detection_loss itself (which is validated\n"
+                    "independently against real upstream values in tests/test_loss.cpp). Stopping\n"
+                    "here rather than continuing with a NaN/Inf-poisoned head.\n", (double) loss_val);
+            free_graph(trn);
+            return 0;
+        }
+        fflush(stdout);
+
+        adamw_step(trn, lr, step, m_state, v_state);
+
+        // carry updated weights into the next iteration's TrainableHead
+        auto readback = [&](ggml_tensor * t, std::vector<float> & out) {
+            ggml_backend_tensor_get(t, out.data(), 0, out.size() * sizeof(float));
+        };
+        readback(trn.head_tensors[0], head.class_w); readback(trn.head_tensors[1], head.class_b);
+        for (int i = 0; i < 3; i++) {
+            readback(trn.head_tensors[2 + 2 * i], head.bbox_w[i]);
+            readback(trn.head_tensors[3 + 2 * i], head.bbox_b[i]);
+        }
+        free_graph(trn);
+    }
+    return 0;
+}

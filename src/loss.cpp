@@ -112,11 +112,17 @@ MatchResult hungarian_match(const std::vector<float> & pred_logits, const std::v
     }
 
     std::vector<int> assign = kuhn_munkres(cost, n, num_queries); // assign[target] = query
-    result.query_idx.resize(n);
-    result.tgt_idx.resize(n);
+    // Defensive: a non-finite cost value (e.g. a frozen/untrained head fed
+    // wildly out-of-distribution input producing NaN/Inf logits) can make
+    // the algorithm's internal comparisons misbehave and leave a target
+    // unassigned (-1) even though n<=num_queries guarantees a real
+    // assignment exists for finite costs -- skip those rather than emit an
+    // invalid query index downstream.
     for (int t = 0; t < n; t++) {
-        result.query_idx[t] = assign[t];
-        result.tgt_idx[t] = t;
+        if (assign[t] >= 0 && assign[t] < num_queries) {
+            result.query_idx.push_back(assign[t]);
+            result.tgt_idx.push_back(t);
+        }
     }
     return result;
 }
@@ -164,6 +170,10 @@ static ggml_tensor * elementwise_max(ggml_context * ctx, ggml_tensor * a, ggml_t
 static ggml_tensor * elementwise_min(ggml_context * ctx, ggml_tensor * a, ggml_tensor * b) {
     return ggml_sub(ctx, a, ggml_relu(ctx, ggml_sub(ctx, a, b)));
 }
+// clamp_diff (backward-capable clamp) is a shared primitive -- see
+// ops.h/ops.cpp. Used below to keep sigmoid's output away from EXACTLY
+// 0.0/1.0 before log() (a frozen model fed out-of-distribution input can
+// legitimately saturate sigmoid in float32).
 
 ggml_tensor * detection_loss(Model & m, ggml_tensor * pred_logits, ggml_tensor * pred_boxes,
                              const DetectionTarget & tgt, const MatchResult & match,
@@ -178,7 +188,7 @@ ggml_tensor * detection_loss(Model & m, ggml_tensor * pred_logits, ggml_tensor *
     ggml_set_name(targets_onehot, "loss_targets_onehot");
     ggml_set_input(targets_onehot);
 
-    ggml_tensor * prob = sigmoid_diff(ctx, pred_logits);
+    ggml_tensor * prob = clamp_diff(ctx, sigmoid_diff(ctx, pred_logits), 1e-6f, 1.0f - 1e-6f);
     ggml_tensor * one_minus_p = ggml_scale_bias(ctx, prob, -1.0f, 1.0f);
     ggml_tensor * one_minus_t = ggml_scale_bias(ctx, targets_onehot, -1.0f, 1.0f);
 

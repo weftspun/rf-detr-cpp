@@ -23,3 +23,6 @@ foreach(t test_backbone_smoke test_backbone test_backbone_base test_backbone_mul
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE rfdetr)
 endforeach()
+
+add_executable(train_step_demo demos/train_step_demo.cpp)
+target_link_libraries(train_step_demo PRIVATE rfdetr)

@@ -157,6 +157,11 @@ ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     return y;
 }
 
+ggml_tensor * clamp_diff(ggml_context * ctx, ggml_tensor * x, float lo, float hi) {
+    ggml_tensor * a = ggml_scale_bias(ctx, ggml_relu(ctx, ggml_scale_bias(ctx, x, 1.0f, -lo)), 1.0f, lo);
+    return ggml_sub(ctx, a, ggml_relu(ctx, ggml_scale_bias(ctx, x, 1.0f, -hi)));
+}
+
 ggml_tensor * mlp(Model & m, ggml_tensor * x, const std::string & pre, int n_layers) {
     ggml_context * ctx = m.ctx_g;
     for (int i = 0; i < n_layers; i++) {

@@ -82,3 +82,14 @@ ggml_tensor * mlp(Model & m, ggml_tensor * x, const std::string & pre, int n_lay
 // token-major (C, T, N) tensor. Weight prefix "<pre>.{q,k,v}_proj",
 // "<pre>.out_proj".
 ggml_tensor * self_attn(Model & m, ggml_tensor * x, const std::string & pre, int n_head);
+
+// clamp(x,lo,hi) = lo + relu(x-lo) - relu(x-hi), built from RELU/SCALE_BIAS
+// (both backward-capable) since ggml_clamp itself has NO backward case
+// (same gap class as ggml_norm/ggml_sigmoid/ggml_concat -- see
+// docs/decisions/0003-training.md). Used anywhere a trainable graph needs
+// to bound a value before a numerically-sensitive op (log, exp) --
+// unclamped, a frozen/pretrained model fed out-of-distribution input can
+// legitimately produce logit or box-regression magnitudes large enough to
+// hit log(0) or exp(overflow), diverging the whole loss to a garbage
+// value instead of a real (if large) number.
+ggml_tensor * clamp_diff(ggml_context * ctx, ggml_tensor * x, float lo, float hi);
