@@ -4,6 +4,7 @@
 #include "ggml-backend.h"
 #include "gguf.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -116,6 +117,37 @@ ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_tensor * y = ggml_mul_mat(ctx, m.get(pre + ".weight"), x);
     if (m.has(pre + ".bias")) y = ggml_add(ctx, y, m.get(pre + ".bias"));
     return y;
+}
+
+ggml_tensor * mlp(Model & m, ggml_tensor * x, const std::string & pre, int n_layers) {
+    ggml_context * ctx = m.ctx_g;
+    for (int i = 0; i < n_layers; i++) {
+        x = linear(m, x, pre + ".layers." + std::to_string(i));
+        if (i + 1 < n_layers) x = ggml_relu(ctx, x);
+    }
+    return x;
+}
+
+ggml_tensor * self_attn(Model & m, ggml_tensor * x, const std::string & pre, int n_head) {
+    ggml_context * ctx = m.ctx_g;
+    const int64_t C = x->ne[0], T = x->ne[1], N = x->ne[2];
+    const int64_t hd = C / n_head;
+
+    ggml_tensor * q = linear(m, x, pre + ".q_proj");
+    ggml_tensor * k = linear(m, x, pre + ".k_proj");
+    ggml_tensor * v = linear(m, x, pre + ".v_proj");
+
+    q = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, q, hd, n_head, T, N), 0, 2, 1, 3)); // (hd,T,H,N)
+    k = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, k, hd, n_head, T, N), 0, 2, 1, 3));
+    v = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, v, hd, n_head, T, N), 1, 2, 0, 3)); // (T,hd,H,N)
+
+    ggml_tensor * kq = ggml_mul_mat(ctx, k, q);                       // (T,T,H,N)
+    kq = ggml_soft_max(ctx, ggml_scale(ctx, kq, 1.0f / sqrtf((float) hd)));
+    ggml_tensor * kqv = ggml_mul_mat(ctx, v, kq);                     // (hd,T,H,N)
+    kqv = ggml_cont(ctx, ggml_permute(ctx, kqv, 0, 2, 1, 3));         // (hd,H,T,N)
+    kqv = ggml_reshape_3d(ctx, kqv, C, T, N);
+
+    return linear(m, kqv, pre + ".out_proj");
 }
 
 ggml_tensor * spatial_layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre, float eps) {

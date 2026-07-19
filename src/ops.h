@@ -48,3 +48,12 @@ ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre);
 // back. Distinct from layer_norm_affine, which normalizes token-major ne[0].
 ggml_tensor * spatial_layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre,
                                         float eps = 1e-6f);
+
+// N-layer MLP (DETR-style): linear -> relu -> linear -> relu -> ... -> linear
+// (no activation after the last layer). Weight prefix "<pre>.layers.{i}".
+ggml_tensor * mlp(Model & m, ggml_tensor * x, const std::string & pre, int n_layers);
+
+// Standard (non-windowed, non-causal) multi-head self-attention over a
+// token-major (C, T, N) tensor. Weight prefix "<pre>.{q,k,v}_proj",
+// "<pre>.out_proj".
+ggml_tensor * self_attn(Model & m, ggml_tensor * x, const std::string & pre, int n_head);

@@ -18,14 +18,18 @@ architecture notes this port is working from, and
 | Milestone | Test | Result |
 |---|---|---|
 | DINOv2-windowed-attention backbone (RFDETRNano, 4 taps) | `test_backbone` | ≤2.5e-4 (gate 5e-2) |
+| Multi-scale projector (C2f fusion, RFDETRNano) | `test_projector` | 1.0e-5 |
+| Deformable attention core (isolated, synthetic) | `test_deform_attn` | 0.0 (exact) |
+| **Object detection end-to-end (RFDETRNano)** | `test_decoder` | boxes 3.3e-4, logits 7.3e-4 |
 
-Plan:
+**Object detection is done for RFDETRNano.** Plan:
 
 1. ~~Backbone: DINOv2-with-windowed-attention encoder~~ — RFDETRNano
    validated; Small/Base/Large configs (and position-embedding bicubic
    interpolation, needed only for patch_size==14 variants at a non-native
    resolution) still to do.
-2. Detection head: Deformable-DETR-style decoder (`lwdetr`/`transformer`)
+2. ~~Detection head: Deformable-DETR-style decoder~~ — RFDETRNano validated
+   end-to-end (backbone → projector → decoder → boxes/logits).
 3. Instance segmentation head (dot-product mask head)
 4. Keypoint head (RFDETRKeypointPreview)
 5. Finetuning/training (C++/ggml training loop) — phase 2, after 1-4 are
