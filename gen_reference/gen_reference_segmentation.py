@@ -16,8 +16,13 @@ import sys
 
 import numpy as np
 import torch
-from rfdetr.config import RFDETRSegNanoConfig
+from rfdetr.config import RFDETRSegNanoConfig, RFDETRSegSmallConfig
 from rfdetr.models.lwdetr import build_model_from_config
+
+CONFIGS = {
+    "seg-nano": (RFDETRSegNanoConfig, 312),
+    "seg-small": (RFDETRSegSmallConfig, 384),
+}
 
 
 def write_arr(f, arr: np.ndarray):
@@ -30,8 +35,10 @@ def write_arr(f, arr: np.ndarray):
 def main():
     ckpt_path = sys.argv[1] if len(sys.argv) > 1 else "models/rf-detr-seg-nano.pt"
     out_path = sys.argv[2] if len(sys.argv) > 2 else "gen_reference/reference_segmentation_nano.bin"
+    variant = sys.argv[3] if len(sys.argv) > 3 else "seg-nano"
+    config_cls, res = CONFIGS[variant]
 
-    cfg = RFDETRSegNanoConfig(pretrain_weights=None, device="cpu")
+    cfg = config_cls(pretrain_weights=None, device="cpu")
     model = build_model_from_config(cfg)
     model.eval()
 
@@ -54,7 +61,6 @@ def main():
     torch.topk = spy_topk
     try:
         torch.manual_seed(0)
-        res = 312
         pixel_values = torch.randn(1, 3, res, res, dtype=torch.float32)
         with torch.no_grad():
             out = model(pixel_values)

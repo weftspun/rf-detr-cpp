@@ -94,7 +94,16 @@ what was open and when it closed.
 - [ ] The *exact* mechanism behind the mask head's larger residual diff
       (random channel-sign accumulation vs. boundary-pixel sensitivity vs.
       both) is not nailed down — only that it isn't a wiring/aliasing bug
-- [ ] Other segmentation variants (Small/Medium/Large/XL/2XL) unvalidated
+- [x] RFDETRSegSmall validated end-to-end (`test_segmentation_small`: boxes
+      4.5e-4, logits 4.9e-4, masks 4.9e-2 against the 0.15 gate —
+      noticeably tighter than SegNano's 0.109, consistent with the
+      "amplified decoder float-drift" explanation in
+      `docs/decisions/segmentation.md`, not a variant-specific issue) —
+      checkpoint-verified against `rf-detr-seg-s-ft.pth` (MD5 confirmed).
+      Same encoder family as SegNano, `num_windows=2` (vs SegNano's 1),
+      resolution 384 (grid 32) — pure config-value extension, no code
+      changes.
+- [ ] Other segmentation variants (Medium/Large/XL/2XL) unvalidated
 - [ ] `RFDETRSegPreviewConfig` and other non-Nano segmentation configs
       unvalidated
 
