@@ -79,6 +79,12 @@ VARIANTS = {
         num_windows=2, ln_eps=1e-6,
         out_feature_indexes_raw=[3, 6, 9, 12],
     ),
+    # RFDETRSegXLargeConfig: same backbone/window pattern, resolution=624 (gw=gh=52).
+    "seg-xlarge": dict(
+        hidden=384, n_layer=12, n_head=6, patch_size=12, n_register=0,
+        num_windows=2, ln_eps=1e-6,
+        out_feature_indexes_raw=[3, 6, 9, 12],
+    ),
     # RFDETRKeypointPreviewConfig: patch_size=12, num_windows=2, resolution=576 (gw=gh=48)
     "keypoint-preview": dict(
         hidden=384, n_layer=12, n_head=6, patch_size=12, n_register=0,
