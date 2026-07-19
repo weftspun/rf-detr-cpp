@@ -101,6 +101,7 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
 
     // decoder layers
     ggml_tensor * tgt_cur = tgt;
+    std::vector<ggml_tensor *> out_hs;
     for (int l = 0; l < p.dec_layers; l++) {
         const std::string pre = "decoder.layers." + std::to_string(l) + ".";
 
@@ -134,14 +135,22 @@ DecoderOutput rfdetr_decoder(Model & m, ggml_tensor * memory, const DecoderParam
         ff = ggml_relu(ctx, ff);
         ff = linear(m, ff, pre + "linear2");
         tgt_cur = layer_norm_affine(m, ggml_add(ctx, tgt_cur, ff), pre + "norm3");
+
+        // return_intermediate=True always: the shared decoder.norm is applied to
+        // EVERY layer's output independently for the intermediate/aux list (the
+        // raw, unnormed tgt_cur is what continues into the next layer, unaffected).
+        // Only the last layer's normed output feeds pred_boxes/pred_logits, but the
+        // segmentation head needs all of them (one DepthwiseConvBlock per layer).
+        out_hs.push_back(layer_norm_affine(m, tgt_cur, "decoder.norm"));
     }
 
-    ggml_tensor * final_hs = layer_norm_affine(m, tgt_cur, "decoder.norm");
+    ggml_tensor * final_hs = out_hs.back();
 
     DecoderOutput out;
     out.pred_logits = linear(m, final_hs, "class_embed");
     ggml_tensor * bbox_delta = mlp(m, final_hs, "bbox_embed", 3);
     out.pred_boxes = bbox_reparam_decode(ctx, bbox_delta, ref_points);
     out.output_proposals = proposals;
+    out.hidden_states = out_hs;
     return out;
 }

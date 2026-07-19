@@ -21,16 +21,19 @@ architecture notes this port is working from, and
 | Multi-scale projector (C2f fusion, RFDETRNano) | `test_projector` | 1.0e-5 |
 | Deformable attention core (isolated, synthetic) | `test_deform_attn` | 0.0 (exact) |
 | **Object detection end-to-end (RFDETRNano)** | `test_decoder` | boxes 3.3e-4, logits 7.3e-4 |
+| **Instance segmentation end-to-end (RFDETRSegNano)** | `test_segmentation` | boxes 1.1e-2, logits 2.9e-3, masks 0.109 (gate 0.15, see `docs/decisions/segmentation.md`) |
 
-**Object detection is done for RFDETRNano.** Plan:
+**Object detection and instance segmentation are both done for the Nano
+variants.** Plan:
 
-1. ~~Backbone: DINOv2-with-windowed-attention encoder~~ — RFDETRNano
-   validated; Small/Base/Large configs (and position-embedding bicubic
-   interpolation, needed only for patch_size==14 variants at a non-native
-   resolution) still to do.
-2. ~~Detection head: Deformable-DETR-style decoder~~ — RFDETRNano validated
-   end-to-end (backbone → projector → decoder → boxes/logits).
-3. Instance segmentation head (dot-product mask head)
+1. ~~Backbone: DINOv2-with-windowed-attention encoder~~ — validated for both
+   RFDETRNano and RFDETRSegNano configs; Small/Base/Large configs (and
+   position-embedding bicubic interpolation, needed only for patch_size==14
+   variants at a non-native resolution) still to do.
+2. ~~Detection head: Deformable-DETR-style decoder~~ — validated end-to-end
+   (backbone → projector → decoder → boxes/logits) for RFDETRNano.
+3. ~~Instance segmentation head~~ — validated end-to-end for RFDETRSegNano
+   (dot-product mask head over all decoder-layer query features).
 4. Keypoint head (RFDETRKeypointPreview)
 5. Finetuning/training (C++/ggml training loop) — phase 2, after 1-4 are
    validated for inference

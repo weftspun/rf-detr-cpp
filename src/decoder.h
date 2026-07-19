@@ -25,6 +25,11 @@ struct DecoderOutput {
     ggml_tensor * pred_logits;       // (num_classes, num_queries, 1), raw logits
     ggml_tensor * output_proposals;  // (4, gw*gh, 1) INPUT tensor -- caller must
                                       // ggml_backend_tensor_set from output_proposals_data()
+    std::vector<ggml_tensor *> hidden_states; // per-layer decoder.norm'd output (dec_layers
+                                              // entries, (hidden_dim, num_queries, 1) each) --
+                                              // hidden_states.back() == the tensor pred_boxes/
+                                              // pred_logits are derived from. Needed by the
+                                              // segmentation head (one block per decoder layer).
 };
 
 // Host-side constant matching gen_encoder_output_proposals (single level, no

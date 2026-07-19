@@ -27,6 +27,15 @@ VARIANTS = {
         num_windows=2, ln_eps=1e-6,
         out_feature_indexes_raw=[3, 6, 9, 12],
     ),
+    # RFDETRSegNanoConfig: same Small/no-registers encoder, but num_windows=1
+    # (windowed vs global attention become numerically identical -- a useful
+    # sanity check that both code paths in backbone.cpp agree), patch_size=12,
+    # resolution=312 (gw=gh=26).
+    "seg-nano": dict(
+        hidden=384, n_layer=12, n_head=6, patch_size=12, n_register=0,
+        num_windows=1, ln_eps=1e-6,
+        out_feature_indexes_raw=[3, 6, 9, 12],
+    ),
 }
 
 
@@ -37,11 +46,11 @@ def derive_indexes(raw):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print(f"usage: {sys.argv[0]} <checkpoint.pth> <out.gguf> [--variant nano]", file=sys.stderr)
+    if len(sys.argv) < 3:
+        print(f"usage: {sys.argv[0]} <checkpoint.pth> <out.gguf> [variant=nano]", file=sys.stderr)
         sys.exit(1)
     ckpt_path, out_path = sys.argv[1], sys.argv[2]
-    variant = "nano"
+    variant = sys.argv[3] if len(sys.argv) > 3 else "nano"
     cfg = VARIANTS[variant]
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)

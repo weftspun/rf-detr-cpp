@@ -19,7 +19,6 @@ import numpy as np
 import torch
 
 HIDDEN = 256
-DEC_LAYERS = 2
 
 TOP_LEVEL = ["class_embed", "bbox_embed", "query_feat", "refpoint_embed"]
 TRANSFORMER_PREFIXES = [
@@ -32,14 +31,14 @@ TRANSFORMER_PREFIXES = [
 ]
 
 
-def dest_name(k: str) -> str | None:
+def dest_name(k: str, dec_layers: int) -> str | None:
     for name in TOP_LEVEL:
         if k == name or k.startswith(name + "."):
             return k  # keep as-is: class_embed.*, bbox_embed.*, query_feat.weight, refpoint_embed.weight
     for pre in TRANSFORMER_PREFIXES:
         if k == pre or k.startswith(pre + "."):
             return k[len("transformer."):]  # enc_output.0.*, enc_out_class_embed.0.*, decoder.ref_point_head.*, decoder.norm.*
-    for i in range(DEC_LAYERS):
+    for i in range(dec_layers):
         pre = f"transformer.decoder.layers.{i}."
         if k.startswith(pre) and "self_attn.in_proj" not in k:
             return "decoder.layers." + str(i) + "." + k[len(pre):]
@@ -47,10 +46,11 @@ def dest_name(k: str) -> str | None:
 
 
 def main():
-    if len(sys.argv) != 3:
-        print(f"usage: {sys.argv[0]} <checkpoint.pth> <out.gguf>", file=sys.stderr)
+    if len(sys.argv) < 3:
+        print(f"usage: {sys.argv[0]} <checkpoint.pth> <out.gguf> [dec_layers=2]", file=sys.stderr)
         sys.exit(1)
     ckpt_path, out_path = sys.argv[1], sys.argv[2]
+    dec_layers = int(sys.argv[3]) if len(sys.argv) > 3 else 2
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     sd = ckpt["model"] if "model" in ckpt else ckpt
@@ -59,14 +59,14 @@ def main():
 
     n_written = 0
     for k, v in sd.items():
-        name = dest_name(k)
+        name = dest_name(k, dec_layers)
         if name is None:
             continue
         arr = v.detach().to(torch.float32).numpy()
         writer.add_tensor(name, np.ascontiguousarray(arr))
         n_written += 1
 
-    for i in range(DEC_LAYERS):
+    for i in range(dec_layers):
         pre = f"transformer.decoder.layers.{i}.self_attn"
         w = sd[f"{pre}.in_proj_weight"].detach().to(torch.float32).numpy()  # (768,256)
         b = sd[f"{pre}.in_proj_bias"].detach().to(torch.float32).numpy()    # (768,)
