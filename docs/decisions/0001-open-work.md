@@ -105,12 +105,34 @@ Full architecture + implementation notes: `docs/decisions/keypoints.md`.
 keypoint detection) are now done.** Remaining scope: other model-size
 variants for each (see their sections above), then phase-2 training.
 
-### Phase 2: finetuning/training — not started
+### Phase 2: finetuning/training — in progress
 
-- [ ] Design and implement a C++/ggml training loop (backprop, optimizer,
-      dataloader) — deliberately deferred until all three inference
-      milestones (detection, segmentation, keypoints) pass, per the
-      project's original scope (`docs/architecture.md`)
+- [x] Design research doc (`docs/decisions/0003-training.md`): surveyed
+      ggml's real autodiff/optimizer API, and audited every op this port
+      uses against `ggml_compute_backward`'s switch for backward-pass
+      support
+- [x] Fixed the biggest blocker found: `ggml_norm` (plain LayerNorm) has no
+      backward case at all, and it's used in every block (backbone,
+      decoder, segmentation, keypoints). Added `layer_norm_affine_diff`
+      (`src/ops.{h,cpp}`) — the same LayerNorm rebuilt from primitives that
+      do have backward support, validated forward-exact-match plus a
+      finite-difference gradient check (`tests/test_norm_backward.cpp`).
+      Two non-obvious ggml backward-shape gotchas surfaced and were routed
+      around: `ggml_sub`/`ggml_div`'s backward doesn't broadcast a smaller
+      `src1`'s gradient back up (unlike `ggml_add`/`ggml_mul`, which do via
+      `ggml_repeat_back`), and `ggml_mean`'s own backward assumes a true
+      scalar output (asserts on a per-row `(1,T,N)` mean) — worked around
+      with `ggml_sum_rows`, whose backward is shape-general. Existing
+      `layer_norm_affine` (fused `ggml_norm`) is untouched, still used by
+      all 8 already-validated inference tests.
+- [ ] Decide the actual finetuning scope (which layers trainable — see
+      `0003-training.md`'s "Recommended scope")
+- [ ] Wire `layer_norm_affine_diff` into the graphs the chosen scope needs
+      trainable
+- [ ] Resolve deformable-attention's backward (Finding 3 in
+      `0003-training.md`) if the decoder is in-scope
+- [ ] Hungarian matching + loss assembly (detection first)
+- [ ] Dataset/dataloader (COCO-format annotations → ggml tensors)
 
 ### Documentation / process
 

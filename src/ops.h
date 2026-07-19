@@ -39,6 +39,23 @@ ggml_tensor * conv2d(Model & m, ggml_tensor * x, const std::string & pre,
 ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & pre,
                                 float eps = 1e-6f);
 
+// Same as layer_norm_affine, but built from primitive ops (sum_rows/scale/
+// add/sqr/sqrt/div/mul) instead of the single fused ggml_norm. ggml_norm has
+// NO backward-pass case at all (ggml_build_backward_expand aborts the
+// process if a gradient is ever requested through it -- see
+// docs/decisions/0003-training.md), so this is the trainable-graph
+// equivalent. Every primitive here was picked not just for having *a*
+// backward case but for one that's actually shape-correct for this usage
+// (e.g. ggml_mean's backward assumes a true scalar output and asserts on
+// (1,T,N); ggml_sub/ggml_div's backward doesn't broadcast a small src1's
+// gradient back up (no repeat_back), unlike ggml_add/ggml_mul's -- see
+// ops.cpp for the exact substitutions and why). Numerically identical to
+// layer_norm_affine (validated to exact match, tests/test_norm_backward.cpp)
+// -- use that one for inference-only graphs (fewer, fused ops); use this one
+// wherever the result needs to flow into a backward pass.
+ggml_tensor * layer_norm_affine_diff(Model & m, ggml_tensor * x, const std::string & pre,
+                                     float eps = 1e-6f);
+
 // y = W x + b for token-major (C_in, T[, N]) activations (bias optional:
 // skipped when "<pre>.bias" is absent)
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre);

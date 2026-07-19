@@ -112,6 +112,33 @@ ggml_tensor * layer_norm_affine(Model & m, ggml_tensor * x, const std::string & 
     return ggml_add(ctx, x, m.get(pre + ".bias"));
 }
 
+ggml_tensor * layer_norm_affine_diff(Model & m, ggml_tensor * x, const std::string & pre, float eps) {
+    // ggml_norm has no backward case (see docs/decisions/0003-training.md), so
+    // this rebuilds LayerNorm from primitives that do. Two of ggml's binary
+    // backward rules are asymmetric: SUB and DIV only propagate a gradient to
+    // src1 when src1 is the SAME shape as the output (no repeat_back), while
+    // ADD and MUL handle a smaller/broadcast src1 correctly. So every
+    // broadcasting subtract is written as add(x, scale(mean,-1)) and every
+    // broadcasting divide as mul(x, reciprocal) (reciprocal computed via a
+    // same-shape, non-broadcast div first). ggml_mean's own backward also
+    // only works when its output is a true scalar (it reuses ADD1, which
+    // asserts a scalar operand) -- useless here since mean's output is
+    // (1,T,N), not (1,1,1,1). ggml_sum_rows has the same forward shape as
+    // ggml_mean over ne[0] but a shape-general backward (plain repeat), so
+    // mean is rebuilt as scale(sum_rows(x), 1/dim) instead.
+    ggml_context * ctx = m.ctx_g;
+    const float inv_dim = 1.0f / (float) x->ne[0];
+    ggml_tensor * mean = ggml_scale(ctx, ggml_sum_rows(ctx, x), inv_dim); // (1, T, N)
+    ggml_tensor * centered = ggml_add(ctx, x, ggml_scale(ctx, mean, -1.0f)); // broadcast add, has backward
+    ggml_tensor * var = ggml_scale(ctx, ggml_sum_rows(ctx, ggml_sqr(ctx, centered)), inv_dim); // (1, T, N)
+    ggml_tensor * std = ggml_sqrt(ctx, ggml_scale_bias(ctx, var, 1.0f, eps));
+    ggml_tensor * ones = ggml_scale_bias(ctx, var, 0.0f, 1.0f);          // (1, T, N), all ones
+    ggml_tensor * inv_std = ggml_div(ctx, ones, std);                    // same shape, non-broadcast div
+    ggml_tensor * normed = ggml_mul(ctx, centered, inv_std);             // broadcast mul, has backward
+    normed = ggml_mul(ctx, normed, m.get(pre + ".weight"));
+    return ggml_add(ctx, normed, m.get(pre + ".bias"));
+}
+
 ggml_tensor * linear(Model & m, ggml_tensor * x, const std::string & pre) {
     ggml_context * ctx = m.ctx_g;
     ggml_tensor * y = ggml_mul_mat(ctx, m.get(pre + ".weight"), x);
