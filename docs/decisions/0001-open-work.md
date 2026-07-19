@@ -246,14 +246,24 @@ variants for each (see their sections above), then phase-2 training.
       with `ggml_sum_rows`, whose backward is shape-general. Existing
       `layer_norm_affine` (fused `ggml_norm`) is untouched, still used by
       all 8 already-validated inference tests.
-- [ ] Decide the actual finetuning scope (which layers trainable — see
-      `0003-training.md`'s "Recommended scope")
-- [ ] Wire `layer_norm_affine_diff` into the graphs the chosen scope needs
-      trainable
-- [ ] Resolve deformable-attention's backward (Finding 3 in
-      `0003-training.md`) if the decoder is in-scope
-- [ ] Hungarian matching + loss assembly (detection first)
-- [ ] Dataset/dataloader (COCO-format annotations → ggml tensors)
+- [x] Decided the finetuning scope: freeze the DINOv2 backbone AND the
+      transformer decoder, finetune only `class_embed`/`bbox_embed` (the
+      smallest useful slice) — see `0003-training.md`. This sidesteps
+      Finding 3 (deformable-attention backward, not a small task) entirely
+      and doesn't even need `layer_norm_affine_diff` for THIS scope (the
+      frozen decoder stack never has a gradient requested through it) —
+      that work stays validated and ready for whenever the scope widens.
+- [ ] Loss: focal + L1 + GIoU (detection) — elementwise/reduction ops, all
+      already backward-capable per Finding 2's audit; GIoU's exact formula
+      not yet decomposed/checked.
+- [ ] Hungarian matching (non-differentiable CPU preprocessing, decoupled
+      from the ggml graph) — not yet implemented.
+- [ ] Dataset/dataloader (COCO-format annotations → ggml tensors) — not
+      yet researched.
+- [ ] `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring once the above land.
+- [ ] (Deferred, only if scope widens later) Resolve deformable-attention's
+      backward (Finding 3) if the decoder becomes trainable; wire
+      `layer_norm_affine_diff` into the decoder's LayerNorms at that point.
 
 ### Documentation / process
 

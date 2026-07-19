@@ -1,6 +1,6 @@
 # 3. Phase-2 finetuning/training — design research + LayerNorm backward fix
 
-* Status: in progress (prerequisite #1 done, see below)
+* Status: in progress (backward prerequisite done, scope decided, loss/matching/dataloader not yet implemented)
 * Date: 2026-07-18
 
 ## Context and Problem Statement
@@ -140,28 +140,53 @@ relative error on 5 sampled elements. The existing fused `layer_norm_affine`
 is untouched (still used by every inference graph) — `layer_norm_affine_diff`
 is a separate, opt-in function for graphs that need backward.
 
-## Recommended scope (remaining, not yet started)
+## Scope decision: detection-head-only finetune (decided)
 
-1. Decide the actual finetuning scope *before* wiring backward through
-   this port's real graphs — e.g., "freeze the DINOv2 backbone, finetune
-   only the decoder + heads" sidesteps needing a deformable-attention
-   backward if the backbone (which doesn't use `ms_deform_attn`) is what's
-   frozen, while the decoder's `ms_deform_attn` calls would still need
-   Finding 3 resolved if the decoder itself is trainable. A
-   detection-head-only or classifier-only finetune (e.g. just
-   `class_embed`/`bbox_embed`, freezing the transformer decoder too) is
-   the smallest useful slice and worth scoping first.
-2. Wire `layer_norm_affine_diff` into whichever real graphs the scope
-   decision above requires trainable (swap-in per call site, not a global
-   replacement — inference-only paths should keep the cheaper fused
-   `layer_norm_affine`).
-3. Resolve Finding 3 (deformable-attention backward) if the trainable scope
-   includes the decoder's `ms_deform_attn` calls; skip it entirely if the
-   scope stays backbone-frozen/decoder-frozen.
-4. Hungarian matching + loss assembly (detection first, matching upstream's
-   own task order) — decoupled CPU preprocessing + elementwise ggml loss.
-5. Dataset/dataloader (COCO-format annotations → ggml tensors) — not
-   researched yet at all this session.
+**Chosen scope: freeze the DINOv2 backbone AND the transformer decoder;
+finetune only `class_embed`/`bbox_embed`** (the final linear/MLP heads
+reading the last decoder layer's hidden state). This is the smallest
+useful slice flagged in the prior draft of this doc, and it's the one that
+sidesteps the most open work:
+
+- Freezing the decoder means `ms_deform_attn`'s backward (Finding 3, a
+  hand-derived analytical gradient, not a small task) is **not needed** —
+  gradients never need to flow through it since nothing upstream of
+  `class_embed`/`bbox_embed` requires a gradient.
+- Freezing the backbone means the windowed-attention machinery
+  (`dinov2_backbone`) also never needs backward support.
+- `class_embed`/`bbox_embed` are plain `linear()`/`mlp()` calls — already
+  fully backward-capable (`MUL_MAT`, `ADD` both have backward cases) with
+  **zero new primitive work** beyond what's already validated.
+- This scope still exercises the real prerequisite this phase closed:
+  `class_embed`/`bbox_embed`'s INPUT (the decoder's final `hidden_states`)
+  is itself the output of a `layer_norm_affine`-heavy stack, but since that
+  stack is frozen (no gradient requested through it), `layer_norm_affine`
+  (the fast, backward-incapable fused version) can stay as-is there too —
+  `layer_norm_affine_diff` isn't even needed for THIS scope specifically,
+  though it remains available (and validated) for whenever the scope
+  widens to include the decoder.
+
+Remaining steps for this scope, in order:
+
+1. Loss: focal loss (classification) + L1 + GIoU (box regression) —
+   elementwise/reduction ops, all already backward-capable
+   (`SUB`/`MUL`/`DIV`/`SQR`/`SQRT`/`MEAN`/`SUM` per Finding 2's audit); GIoU
+   needs its own formula checked but likely decomposes the same way.
+2. Hungarian matching (`scipy.optimize.linear_sum_assignment` or
+   equivalent) — non-differentiable CPU preprocessing on detached
+   `pred_boxes`/`pred_logits`, decoupled from the ggml graph entirely; can
+   be plain C++ (e.g. a straightforward Jonker-Volgenant/Hungarian
+   implementation) or shell out to a small Python step, since it never
+   touches the gradient graph.
+3. Dataset/dataloader (COCO-format annotations → ggml input tensors) — not
+   researched yet.
+4. `ggml_opt_step_adamw`/`ggml_opt_epoch` wiring (Finding 1's existing
+   framework) once 1-3 land.
+
+Widening the scope later (decoder trainable, then backbone trainable) is a
+separate future decision — each widening reuses `layer_norm_affine_diff`
+directly (already validated) except the decoder-trainable step, which
+additionally needs Finding 3.
 
 ## Consequences
 
