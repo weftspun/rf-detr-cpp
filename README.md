@@ -26,6 +26,7 @@ consolidated open-task checklist across all milestones.
 | **Instance segmentation end-to-end (RFDETRSegNano)** | `test_segmentation` | boxes 1.1e-2, logits 2.9e-3, masks 0.109 (gate 0.15, see `docs/decisions/segmentation.md`) |
 | **Keypoint detection end-to-end (RFDETRKeypointPreview)** | `test_keypoints` | boxes 3.5e-3, logits 9.3e-4, keypoints 4.2e-3 |
 | RFDETRBase backbone (patch_size==14, bicubic+antialias pos-embed interpolation) | `test_backbone_base` | ≤1.6e-4 |
+| **RFDETRBase object detection end-to-end** | `test_decoder_base` | boxes 1.1e-3, logits 7.2e-4 |
 
 **All three inference milestones are done for the Nano-family variants:
 object detection, instance segmentation, and keypoint detection.** Now

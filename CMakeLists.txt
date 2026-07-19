@@ -18,7 +18,7 @@ add_library(rfdetr STATIC
 target_link_libraries(rfdetr PUBLIC ggml)
 target_include_directories(rfdetr PUBLIC src)
 
-foreach(t test_backbone_smoke test_backbone test_backbone_base test_projector test_deform_attn test_decoder test_segmentation test_keypoints)
+foreach(t test_backbone_smoke test_backbone test_backbone_base test_projector test_deform_attn test_decoder test_decoder_base test_segmentation test_keypoints)
     add_executable(${t} tests/${t}.cpp)
     target_link_libraries(${t} PRIVATE rfdetr)
 endforeach()

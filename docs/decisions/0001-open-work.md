@@ -35,8 +35,10 @@ what was open and when it closed.
       two `ggml_mul_mat` calls — no custom op needed, and it's inherently
       GPU-backend-ready (runs on whichever ggml backend is active).
 - [x] RFDETRBase backbone validated end-to-end (`test_backbone_base`)
-- [ ] RFDETRBase full pipeline (projector+decoder) not yet validated —
-      only the backbone so far
+- [x] RFDETRBase full detection pipeline validated (`test_decoder_base`:
+      boxes 1.1e-3, logits 7.2e-4) — 3 decoder layers (vs. Nano-family's
+      2/4), confirms `src/decoder.cpp` generalizes cleanly to a third
+      `dec_layers` value with no code changes
 - [ ] `qkv_bias` (config default `True`) never explicitly checked for
       presence against a real checkpoint key — low risk, `linear()`
       handles bias-optional generically either way, but not confirmed
