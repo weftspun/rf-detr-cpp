@@ -26,15 +26,24 @@ what was open and when it closed.
       (`test_deform_attn`, exact — see `docs/decisions/decoder.md`)
 - [x] Detection decoder validated end-to-end (`test_decoder`: boxes 3.3e-4,
       logits 7.3e-4)
+- [x] Position-embedding bicubic+antialias interpolation implemented and
+      validated (`test_backbone_base`: max-abs-diff ≤1.6e-4) — needed for
+      `patch_size==14` variants at a non-native resolution (RFDETRBase);
+      see `docs/decisions/0002-position-embed-bicubic.md`. ggml has no
+      bicubic+antialias built-in; solved via a precomputed resize matrix
+      (probed directly from PyTorch's real implementation) applied through
+      two `ggml_mul_mat` calls — no custom op needed, and it's inherently
+      GPU-backend-ready (runs on whichever ggml backend is active).
+- [x] RFDETRBase backbone validated end-to-end (`test_backbone_base`)
+- [ ] RFDETRBase full pipeline (projector+decoder) not yet validated —
+      only the backbone so far
 - [ ] `qkv_bias` (config default `True`) never explicitly checked for
       presence against a real checkpoint key — low risk, `linear()`
       handles bias-optional generically either way, but not confirmed
-- [ ] Other backbone/decoder size variants (Small/Base/Large/XL/2XL)
-      unvalidated — only Nano-family configs (Nano, SegNano) confirmed
-- [ ] Position-embedding bicubic interpolation not implemented — needed
-      for `patch_size==14` variants at a non-native resolution
-      (RFDETRBase/Large-deprecated); Nano-family variants (`patch_size!=14`)
-      don't need it (see `docs/decisions/backbone-windowing.md`)
+- [ ] Other backbone/decoder size variants (Small/Large/XL/2XL, and
+      Large-deprecated which shares RFDETRBase's patch_size==14 path)
+      unvalidated — only Nano-family configs + RFDETRBase's backbone
+      confirmed so far
 - [ ] Multi-image batching (N>1) not supported — `backbone.cpp`'s
       windowed/global merge-reshape trick assumes a single image per graph
 

@@ -96,10 +96,44 @@ std::vector<ggml_tensor *> dinov2_backbone(Model & m, ggml_tensor * x, const Bac
     ggml_tensor * patch_tok = ggml_reshape_3d(ctx, patches, n_patch, p.hidden, 1);
     patch_tok = ggml_cont(ctx, ggml_permute(ctx, patch_tok, 1, 0, 2, 3)); // (hidden, n_patch, 1)
 
-    ggml_tensor * pos = m.get("embeddings.position_embeddings"); // (hidden, 1+n_patch, 1)
+    // position_embeddings is sized for the CHECKPOINT's native training grid,
+    // not necessarily the runtime one (p.native_grid != 0 -- only true for
+    // patch_size==14 variants at a non-native resolution, e.g. RFDETRBase;
+    // see docs/decisions/0002-position-embed-bicubic.md). CLS's own position
+    // entry is never resized, only the patch grid.
+    const int64_t native_grid = p.native_grid > 0 ? p.native_grid : gw;
+    const int64_t native_n_patch = native_grid * native_grid;
+
+    ggml_tensor * pos = m.get("embeddings.position_embeddings"); // (hidden, 1+native_n_patch, 1)
     ggml_tensor * cls_pos = ggml_cont(ctx, ggml_view_3d(ctx, pos, p.hidden, 1, 1, pos->nb[1], pos->nb[2], 0));
-    ggml_tensor * patch_pos = ggml_cont(ctx, ggml_view_3d(ctx, pos, p.hidden, n_patch, 1, pos->nb[1], pos->nb[2],
+    ggml_tensor * patch_pos = ggml_cont(ctx, ggml_view_3d(ctx, pos, p.hidden, native_n_patch, 1, pos->nb[1], pos->nb[2],
                                                           pos->nb[1]));
+
+    if (native_grid != gw) {
+        // Separable bicubic+antialias resize via two ggml_mul_mat's against a
+        // GGUF-baked weight matrix (extracted directly from PyTorch's real
+        // implementation at conversion time -- exact, not a hand-transcribed
+        // formula; see extract_bicubic_aa_resize_matrix in
+        // scripts/convert_dinov2_to_gguf.py). "embeddings.pos_resize":
+        // ggml ne=(native_grid, gw), i.e. (k=in, n=out) for ggml_mul_mat.
+        ggml_tensor * resize_w = m.get("embeddings.pos_resize");
+        ggml_tensor * grid = ggml_cont(ctx, ggml_permute(ctx, patch_pos, 1, 0, 2, 3)); // (native_n_patch,hidden,1)
+        grid = ggml_reshape_4d(ctx, grid, native_grid, native_grid, p.hidden, 1);      // (w,h,hidden,1), native
+
+        ggml_tensor * rw = ggml_reshape_2d(ctx, grid, native_grid, native_grid * p.hidden); // (in_w, h*hidden)
+        ggml_tensor * ow = ggml_mul_mat(ctx, resize_w, rw);                                 // (gw, h*hidden)
+        ow = ggml_reshape_4d(ctx, ow, gw, native_grid, p.hidden, 1);
+
+        ggml_tensor * oh_in = ggml_cont(ctx, ggml_permute(ctx, ow, 1, 0, 2, 3));  // (native_h, gw, hidden, 1)
+        ggml_tensor * rh = ggml_reshape_2d(ctx, oh_in, native_grid, gw * p.hidden);
+        ggml_tensor * oh = ggml_mul_mat(ctx, resize_w, rh);                       // (gh, gw*hidden)
+        oh = ggml_reshape_4d(ctx, oh, gh, gw, p.hidden, 1);
+        ggml_tensor * resized_grid = ggml_cont(ctx, ggml_permute(ctx, oh, 1, 0, 2, 3)); // (gw,gh,hidden,1)
+
+        ggml_tensor * resized_tok = ggml_reshape_3d(ctx, resized_grid, n_patch, p.hidden, 1);
+        patch_pos = ggml_cont(ctx, ggml_permute(ctx, resized_tok, 1, 0, 2, 3)); // (hidden, n_patch, 1)
+    }
+
     patch_tok = ggml_add(ctx, patch_tok, patch_pos);
 
     ggml_tensor * cls_tok = ggml_reshape_3d(ctx, m.get("embeddings.cls_token"), p.hidden, 1, 1);

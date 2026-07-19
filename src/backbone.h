@@ -1,11 +1,8 @@
 // RF-DETR backbone: DINOv2 with windowed attention
 // (rfdetr/models/backbone/dinov2_with_windowed_attn.py upstream).
 //
-// Verified against the real upstream source (see
-// docs/decisions/backbone-windowing.md); NOT yet diffed against a real
-// PyTorch reference dump. Single-image inference only (N=1); no
-// position-embedding interpolation yet (fine for patch_size != 14 variants
-// such as RFDETRNano, see the decision doc for which variants need it).
+// Verified against real upstream checkpoints (see
+// docs/decisions/backbone-windowing.md). Single-image inference only (N=1).
 #pragma once
 
 #include "ops.h"
@@ -26,6 +23,13 @@ struct BackboneParams {
     // indices to tap (always run global/full attention, per the derivation).
     std::vector<int> window_block_indexes;
     std::vector<int> out_feature_indexes;
+    // Position-embedding bicubic interpolation (interpolate_pos_encoding,
+    // needed only when patch_size==14 and the runtime resolution differs
+    // from the checkpoint's native training grid -- see
+    // docs/decisions/backbone-windowing.md and 0002-position-embed-bicubic.md).
+    // 0 (default) = no interpolation, position_embeddings used as-is
+    // (correct for every patch_size!=14 variant validated so far).
+    int native_grid = 0;
 };
 
 // x: image pixels (W, H, 3, 1), already resized/normalized per the DINOv2

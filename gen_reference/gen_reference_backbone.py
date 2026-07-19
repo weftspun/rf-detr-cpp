@@ -29,6 +29,19 @@ NANO = dict(
     out_feature_indexes_raw=[3, 6, 9, 12],
 )
 
+# RFDETRBaseConfig: patch_size=14 (native), image_size stays DINOv2's native
+# 518 (37x37 grid) since positional_encoding_size(37)*patch_size(14)==518, but
+# resolution=560 (40x40 grid) triggers real bicubic+antialias interpolation
+# inside the model -- see docs/decisions/0002-position-embed-bicubic.md.
+BASE = dict(
+    hidden_size=384, num_hidden_layers=12, num_attention_heads=6,
+    patch_size=14, num_register_tokens=0, num_windows=4,
+    image_size=518, resolution=560,
+    out_feature_indexes_raw=[2, 5, 8, 11],
+)
+
+VARIANTS = {"nano": NANO, "base": BASE}
+
 
 def write_arr(f, arr: np.ndarray):
     arr = np.ascontiguousarray(arr.astype(np.float32))
@@ -40,7 +53,8 @@ def write_arr(f, arr: np.ndarray):
 def main():
     ckpt_path = sys.argv[1] if len(sys.argv) > 1 else "models/rf-detr-nano.pth"
     out_path = sys.argv[2] if len(sys.argv) > 2 else "gen_reference/reference_backbone_nano.bin"
-    cfg = NANO
+    variant = sys.argv[3] if len(sys.argv) > 3 else "nano"
+    cfg = VARIANTS[variant]
 
     raw = cfg["out_feature_indexes_raw"]
     window_block_indexes = sorted(set(range(raw[-1] + 1)) - set(raw))

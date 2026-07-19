@@ -25,14 +25,17 @@ consolidated open-task checklist across all milestones.
 | **Object detection end-to-end (RFDETRNano)** | `test_decoder` | boxes 3.3e-4, logits 7.3e-4 |
 | **Instance segmentation end-to-end (RFDETRSegNano)** | `test_segmentation` | boxes 1.1e-2, logits 2.9e-3, masks 0.109 (gate 0.15, see `docs/decisions/segmentation.md`) |
 | **Keypoint detection end-to-end (RFDETRKeypointPreview)** | `test_keypoints` | boxes 3.5e-3, logits 9.3e-4, keypoints 4.2e-3 |
+| RFDETRBase backbone (patch_size==14, bicubic+antialias pos-embed interpolation) | `test_backbone_base` | ≤1.6e-4 |
 
 **All three inference milestones are done for the Nano-family variants:
-object detection, instance segmentation, and keypoint detection.** Plan:
+object detection, instance segmentation, and keypoint detection.** Now
+extending to other model-size variants — see `docs/decisions/0001-open-work.md`.
 
 1. ~~Backbone: DINOv2-with-windowed-attention encoder~~ — validated for
-   RFDETRNano, RFDETRSegNano, and RFDETRKeypointPreview configs; Small/Base/
-   Large configs (and position-embedding bicubic interpolation, needed only
-   for patch_size==14 variants at a non-native resolution) still to do.
+   RFDETRNano, RFDETRSegNano, RFDETRKeypointPreview, and RFDETRBase's
+   backbone (including bicubic+antialias position-embedding interpolation,
+   see `docs/decisions/0002-position-embed-bicubic.md`); Small/Large/XL/2XL
+   still to do, and RFDETRBase's projector+decoder aren't wired up yet.
 2. ~~Detection head: Deformable-DETR-style decoder~~ — validated end-to-end
    (backbone → projector → decoder → boxes/logits) for RFDETRNano.
 3. ~~Instance segmentation head~~ — validated end-to-end for RFDETRSegNano

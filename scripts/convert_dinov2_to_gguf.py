@@ -42,6 +42,19 @@ VARIANTS = {
         num_windows=2, ln_eps=1e-6,
         out_feature_indexes_raw=[3, 6, 9, 12],
     ),
+    # RFDETRBaseConfig: patch_size=14 (native DINOv2), num_windows=4,
+    # resolution=560, positional_encoding_size=37 (37*14=518=DINOv2's native
+    # training resolution) -- runtime grid gw=gh=560/14=40 != native grid 37,
+    # so position embeddings need bicubic+antialias interpolation at
+    # inference (see docs/decisions/backbone-windowing.md and
+    # 0002-position-embed-bicubic.md). native_grid triggers baking the
+    # resize weight matrix below.
+    "base": dict(
+        hidden=384, n_layer=12, n_head=6, patch_size=14, n_register=0,
+        num_windows=4, ln_eps=1e-6,
+        out_feature_indexes_raw=[2, 5, 8, 11],
+        native_grid=37, runtime_grid=40,
+    ),
 }
 
 
@@ -49,6 +62,21 @@ def derive_indexes(raw):
     window_block_indexes = sorted(set(range(raw[-1] + 1)) - set(raw))
     out_feature_indexes = [x - 1 for x in raw]  # stage number -> 0-based layer-output index
     return window_block_indexes, out_feature_indexes
+
+
+def extract_bicubic_aa_resize_matrix(in_size, out_size):
+    """(out_size, in_size) separable resize matrix reproducing PyTorch's
+    F.interpolate(mode='bicubic', antialias=True, align_corners=False)
+    EXACTLY (verified to 4.8e-7 against the real 2D op) -- probed directly
+    from the real implementation (impulse response per input position, with
+    the orthogonal axis held constant so a single probe isolates one axis)
+    rather than hand-transcribing PyTorch's internal antialias-kernel
+    formula, to avoid a transcription bug. See
+    docs/decisions/0002-position-embed-bicubic.md."""
+    eye = torch.eye(in_size).unsqueeze(1).unsqueeze(-1).expand(in_size, 1, in_size, in_size).contiguous()
+    out = torch.nn.functional.interpolate(eye, size=(out_size, out_size), mode="bicubic",
+                                          align_corners=False, antialias=True)
+    return out[:, 0, :, 0].T.contiguous().numpy()  # (out_size, in_size)
 
 
 def main():
@@ -77,6 +105,20 @@ def main():
     writer.add_array("rfdetr.backbone.out_feature_indexes", out_feature_indexes)
 
     n_written = 0
+    if "native_grid" in cfg:
+        native_grid, runtime_grid = cfg["native_grid"], cfg["runtime_grid"]
+        writer.add_uint32("rfdetr.backbone.native_grid", native_grid)
+        writer.add_uint32("rfdetr.backbone.runtime_grid", runtime_grid)
+        resize_w = extract_bicubic_aa_resize_matrix(native_grid, runtime_grid)  # (runtime_grid, native_grid)
+        # numpy shape (runtime_grid, native_grid) -> gguf reverses -> ggml
+        # ne=(native_grid, runtime_grid), the (k=native_grid, n=runtime_grid)
+        # shape ggml_mul_mat needs directly (see backbone.cpp's pos-embed
+        # resize: out[o, batch] = sum_i resize_w[i, o] * in[i, batch]).
+        writer.add_tensor("embeddings.pos_resize", resize_w.astype(np.float32))
+        n_written += 1
+        print(f"baked pos_resize matrix ({native_grid}->{runtime_grid}), row sums "
+              f"[{resize_w.sum(axis=1).min():.6f}, {resize_w.sum(axis=1).max():.6f}]")
+
     for k, v in sd.items():
         if not k.startswith(PREFIX):
             continue
