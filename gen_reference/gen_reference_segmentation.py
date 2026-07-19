@@ -17,8 +17,8 @@ import sys
 import numpy as np
 import torch
 from rfdetr.config import (
-    RFDETRSegLargeConfig, RFDETRSegMediumConfig, RFDETRSegNanoConfig, RFDETRSegSmallConfig,
-    RFDETRSegXLargeConfig, RFDETRSeg2XLargeConfig,
+    RFDETRSegLargeConfig, RFDETRSegMediumConfig, RFDETRSegNanoConfig, RFDETRSegPreviewConfig,
+    RFDETRSegSmallConfig, RFDETRSegXLargeConfig, RFDETRSeg2XLargeConfig,
 )
 from rfdetr.models.lwdetr import build_model_from_config
 
@@ -26,6 +26,7 @@ CONFIGS = {
     "seg-nano": (RFDETRSegNanoConfig, 312, 100),
     "seg-small": (RFDETRSegSmallConfig, 384, 100),
     "seg-medium": (RFDETRSegMediumConfig, 432, 200),
+    "seg-preview": (RFDETRSegPreviewConfig, 432, 200),
     # RFDETRSegLargeConfig's own num_queries default (200) does NOT match
     # the actual published rf-detr-seg-l-ft.pth checkpoint, which has
     # refpoint_embed.weight/query_feat.weight shaped for 300 queries

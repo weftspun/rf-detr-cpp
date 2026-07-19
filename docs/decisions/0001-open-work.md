@@ -177,8 +177,12 @@ what was open and when it closed.
       committed and ready to re-validate once fixed. Seg2XLarge (even
       larger, 768 res) is likely to hit the same issue and should wait for
       this to be root-caused first.
-- [ ] `RFDETRSegPreviewConfig` and other non-Nano segmentation configs
-      unvalidated
+- [x] RFDETRSegPreview validated end-to-end (`test_segmentation_preview`:
+      boxes 4.7e-4, logits 1.6e-3, masks 5.6e-2 against the 0.15 gate) —
+      checkpoint-verified against `rf-detr-seg-preview.pt` (MD5 confirmed).
+      Same resolution as SegMedium (432, grid 36) but `dec_layers=4` (not
+      5), `num_queries=200` — pure config-value extension, no code
+      changes.
 
 ### Keypoint detection (RFDETRKeypointPreview) — done
 

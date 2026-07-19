@@ -73,6 +73,14 @@ VARIANTS = {
         num_windows=2, ln_eps=1e-6,
         out_feature_indexes_raw=[3, 6, 9, 12],
     ),
+    # RFDETRSegPreviewConfig: same backbone/window pattern as seg-small,
+    # resolution=432 (gw=gh=36) -- same resolution as seg-medium but
+    # dec_layers=4 (not 5), checkpoint-verified via uv run --with rfdetr.
+    "seg-preview": dict(
+        hidden=384, n_layer=12, n_head=6, patch_size=12, n_register=0,
+        num_windows=2, ln_eps=1e-6,
+        out_feature_indexes_raw=[3, 6, 9, 12],
+    ),
     # RFDETRSegLargeConfig: same backbone/window pattern, resolution=504 (gw=gh=42).
     "seg-large": dict(
         hidden=384, n_layer=12, n_head=6, patch_size=12, n_register=0,
