@@ -11,11 +11,11 @@ scripts start reading it.
 HF `transformers`' `Dinov2WithRegisters` (targets transformers v5 API).
 Configs: `src/rfdetr/models/backbone/dinov2_configs/*.json`.
 
-| Variant | hidden | layers | heads | patch | registers |
-|---|---|---|---|---|---|
-| Small | 384 | 12 | 6 | 14 | 4 |
-| Base  | 768 | 12 | 12 | 14 | 0 (plain `Dinov2Model`) |
-| Large | 1024 | 24 | 16 | 14 | 4 |
+| Variant | hidden | layers | heads | patch | registers               |
+| ------- | ------ | ------ | ----- | ----- | ----------------------- |
+| Small   | 384    | 12     | 6     | 14    | 4                       |
+| Base    | 768    | 12     | 12    | 14    | 0 (plain `Dinov2Model`) |
+| Large   | 1024   | 24     | 16    | 14    | 4                       |
 
 - MLP ratio 4, GELU, LayerScale, learned/interpolated absolute position
   embeddings (`nn.Parameter([1, num_patches+1, hidden])`, bicubic-interpolated

@@ -39,9 +39,9 @@ class** (person, +1 background = 2), consistent with
 **Also found by checkpoint verification, not present in any source
 reading**: a `keypoint_head.keypoint_proj.{0,1,2}.*` weight set exists in
 this checkpoint but is **dead** — `rfdetr/models/weights.py`'s own comment
-confirms it: *"The preview keypoint checkpoint still stores the old
+confirms it: _"The preview keypoint checkpoint still stores the old
 standalone MLP projection head, but the current GroupPose inference path
-no longer consumes it."* Ignore these keys entirely; `keypoint_embed.*`
+no longer consumes it."_ Ignore these keys entirely; `keypoint_embed.*`
 (not `keypoint_head.*`) is the real, currently-used weight set. This is
 exactly the kind of thing source-reading alone misses and checkpoint
 verification catches — consistent with every prior milestone's experience
@@ -75,7 +75,7 @@ differently (confirmed from source, `models/lwdetr.py` around the
 `decoder_memory = memory` (**main** projector output — detection/
 segmentation's cross-attention keeps using the ordinary projector, kp-only
 mode does NOT redirect the main stream), `kp_cross_attn_memory =
-cross_attn_srcs` (**second** projector output, used *only* by the
+cross_attn_srcs` (**second** projector output, used _only_ by the
 keypoint-specific deformable cross-attention inside
 `TransformerDecoderLayer`, see below).
 
@@ -83,11 +83,13 @@ keypoint-specific deformable cross-attention inside
 
 AdaLN-modulated learned queries, conditioned on a per-instance feature
 vector:
+
 ```
 normed = LayerNorm(no affine)(self.queries)                    # (total_kp, out_dim), queries is a learned Parameter
 scale, shift, gate = split3(MLP(Linear→GELU→Linear(zero-init))(cond))  # cond: (..., dim) -> (..., out_dim*3)
 modulated = out_proj((scale+1)*normed + shift) * gate + self.queries   # (..., total_kp, out_dim)
 ```
+
 `adaLN_modulation`'s final `Linear`'s weight+bias are **zero-initialized**
 at construction (so untrained modulation is a no-op) — irrelevant for
 inference (loaded from checkpoint) but confirms the intended residual-like
@@ -96,6 +98,7 @@ zero-init values, drifting via training.
 
 Two independent instances (`grouppose_keypoint_dim_downscale=1` → both
 `out_dim = d_model = 256`, no separate `kp_dim`):
+
 - `keypoint_query_initializer` (decoder-level): conditioned on `tgt`
   (the learned static content-query embedding, same `tgt` fed to the main
   decoder) → produces `tgt_keypoints`, the **initial keypoint tokens** fed
@@ -105,7 +108,7 @@ Two independent instances (`grouppose_keypoint_dim_downscale=1` → both
   gather used for `hs_enc`/`refpoint_embed_ts` in the main two-stage path)
   → produces `keypoint_memory_ts`, fed through `enc_out_keypoint_embed[0]`
   (an `MLP(kp_dim, d_model, kp_dim, 2)`, 3-layer per the `MLP` class's
-  `(in,hidden,out,n_layer=2)` signature meaning 2 *hidden* layers — verify
+  `(in,hidden,out,n_layer=2)` signature meaning 2 _hidden_ layers — verify
   exact layer count against checkpoint keys) to produce `kp_delta`, decoded
   via the same bbox-reparam-style formula as everywhere else:
   `kp_xy = kp_delta[...,:2]*ref_wh + ref_xy` (using the two-stage detection
@@ -137,7 +140,7 @@ inference-only port needs to replicate. Only `keypoint_query_initializer`
 
 ## Per-layer keypoint processing (`TransformerDecoderLayer.forward_post`, keypoint branch)
 
-Runs *after* the ordinary detection self-attn/cross-attn/FFN sublayers
+Runs _after_ the ordinary detection self-attn/cross-attn/FFN sublayers
 (same as `src/decoder.cpp`'s existing 3 sublayers — unchanged), as a 4th
 stage, only when `enable_keypoint_processing`:
 
@@ -161,11 +164,11 @@ this checkpoint doesn't use it.
    blocking cross-class keypoint interactions — **trivially all-zero
    (no masking) for `num_keypoints_per_class=[17]`**, a single class, so
    this mask can be skipped/ignored for this checkpoint: `_create_keypoint_class_mask`
-   only sets `True` entries between *different* classes' keypoint ranges,
+   only sets `True` entries between _different_ classes' keypoint ranges,
    and there's only one class here). Output splits back into an updated
    `tgt` (index 0) and updated `keypoint_tgt` (indices 1-17), each with
-   its own residual+LayerNorm (`instance_kp_layer_scale`, a *learned
-   scalar* initialized to `1e-6`, gates the `tgt` update specifically —
+   its own residual+LayerNorm (`instance_kp_layer_scale`, a _learned
+   scalar_ initialized to `1e-6`, gates the `tgt` update specifically —
    `tgt = tgt + dropout(inst_out_proj(tgt2)) * instance_kp_layer_scale`).
 2. **Inter-instance keypoint attention**: **skipped entirely** —
    `inter_instance_kp_attn=False` for this config (not set, defaults
@@ -181,19 +184,19 @@ this checkpoint doesn't use it.
    different weight prefix and different `query`/`value_input`/
    `ref_points`), using `bbox_ref_for_kp` = the **parent query's own
    `reference_points`** (the same fixed detection-decoder reference box,
-   expanded/repeated across all 17 keypoints of that instance — *not* a
+   expanded/repeated across all 17 keypoints of that instance — _not_ a
    per-keypoint xy reference), sampling from `kp_cross_attn_memory` (the
    **second/dual** projector's output, `memory_in_proj`'d — identity here)
    rather than the main `memory`. Residual + LayerNorm (`kp_cross_attn_norm`).
 4. **Keypoint-specific FFN**: `kp_linear1(kp_dim→4*d_model)` → activation
    (ReLU, same `activation` as the main FFN) → `kp_linear3(4*d_model→kp_dim)`
-   → residual + `kp_norm5`. Note the *expansion width* is `d_model*4` (1024)
+   → residual + `kp_norm5`. Note the _expansion width_ is `d_model*4` (1024)
    even though `kp_dim` may be `<d_model` in the general (downscaled) case
    — for this config `kp_dim=d_model=256` so it's the ordinary 256→1024→256
    FFN, same shape as the main decoder's FFN.
 
 Returns `(tgt, keypoint_tgt)` — both feed into the next layer (unlike the
-main `hs`/pred_boxes/pred_logits, which only need the *last* layer,
+main `hs`/pred_boxes/pred_logits, which only need the _last_ layer,
 `TransformerDecoder.forward` collects **all** layers' `keypoint_tgt` into
 `intermediate_keypoints` — check whether the keypoint head, like
 segmentation, needs all layers or just the last one before assuming
@@ -213,6 +216,7 @@ Per-layer forward (only the **last** decoder layer's `keypoint_tgt` is
 actually needed for the final output — `outputs_keypoints[-1]`, exactly
 like detection's `pred_boxes`/`pred_logits` only needing `hs[-1]`; unlike
 segmentation, which genuinely needs every layer):
+
 ```
 outputs_keypoints_delta = keypoint_embed(keypoint_tgt)      # (..., num_kp, 8)
 ref_wh = ref_unsigmoid[..., 2:].unsqueeze(-2)                # parent query's OWN box, same one everywhere else
@@ -221,6 +225,7 @@ keypoints_xy = outputs_keypoints_delta[..., :2] * ref_wh + ref_xy   # same repar
 keypoints_other = outputs_keypoints_delta[..., 2:]           # findable, visible, 3 Cholesky params, class-logit -- passthrough
 outputs_keypoints_compact = cat([keypoints_xy, keypoints_other], dim=-1)   # (..., num_kp, 8)
 ```
+
 `_format_keypoint_output`: converts "compact" (`total_actual_keypoints`) to
 "class-padded" (`num_classes * max_keypoints_per_class`) layout — **for
 `num_keypoints_per_class=[17]` (single class) these are equal** (`17 ==
@@ -238,11 +243,12 @@ head's full `num_classes+1` (91) output width. For this checkpoint
 sum_{k=0..16}(keypoint_predictions[..., k, 7])`, **all other 90 classes
 (including background) unchanged**. Applied as
 `outputs_class = outputs_class + self._aggregate_keypoint_class_logits(outputs_keypoints)`
-— i.e. this is an *additive correction to `pred_logits`*, not a separate
+— i.e. this is an _additive correction to `pred_logits`_, not a separate
 output; `src/decoder.cpp`'s existing `class_embed` linear output needs this
 term added in before being returned, once the keypoint head is wired in.
 
 Final: `out["pred_keypoints"] = outputs_keypoints[-1]` (last layer only).
+
 - Final `out["pred_keypoints"] = outputs_keypoints[-1]` — last layer only
   (mirrors detection's `[-1]`, unlike segmentation's "all layers").
 
@@ -264,7 +270,7 @@ padding + class-logit boost). `src/decoder.cpp` gained an optional
 loop — detection-only callers (Nano, SegNano) pass `nullptr` and are
 unaffected (both re-validated after this change).
 
-### A real bug found only by checking `_kp_active_mask`'s *values*, not its shape
+### A real bug found only by checking `_kp_active_mask`'s _values_, not its shape
 
 Two of `_format_keypoint_output`'s parameters — `num_keypoint_classes` and
 `active_class_idx` — were initially guessed as `2` and `0`
@@ -272,16 +278,16 @@ Two of `_format_keypoint_output`'s parameters — `num_keypoint_classes` and
 `[0:17)`, class-logit boost on logits column 0). This looked
 **self-consistent**: a reference dump built with that same guess matched a
 C++ implementation using the same guess, on both `pred_keypoints` (4.2e-3)
-*and* — misleadingly — appeared to only fail on `pred_logits`. The
+_and_ — misleadingly — appeared to only fail on `pred_logits`. The
 `pred_logits` failure (mean-abs-diff 0.42, clearly not float noise) was the
 tell. Directly capturing upstream's own `_aggregate_keypoint_class_logits`
 output via a hook showed the boost was **exactly 0** for every query with
 that guess — and inspecting the checkpoint's actual `_kp_active_mask`
-buffer *values* (not just its `(2,17)` shape, which is consistent with
+buffer _values_ (not just its `(2,17)` shape, which is consistent with
 either `[17,0]` or `[0,17]`) showed row 0 all-`False`, row 1 all-`True`:
 the real schema is `num_keypoints_per_class=[0,17]`, i.e.
 `active_class_idx=1`. With the correct schema, `pred_logits` matched to
-9.3e-4. **Lesson for future checkpoint verification**: a tensor's *shape*
+9.3e-4. **Lesson for future checkpoint verification**: a tensor's _shape_
 matching an assumption is necessary but not sufficient — when a shape is
 ambiguous between two orderings, check the actual values before trusting
 either. `docs/decisions/backbone-windowing.md`'s off-by-one and this bug

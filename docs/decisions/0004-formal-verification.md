@@ -1,7 +1,7 @@
 # 4. Formal verification (Lean4/Mathlib) of the backward-pass primitive tricks
 
-* Status: accepted
-* Date: 2026-07-19
+- Status: accepted
+- Date: 2026-07-19
 
 ## Context and Problem Statement
 
@@ -53,7 +53,7 @@ actually ships:
 as an external fact below (2D measure-theoretic: the smallest axis-aligned
 box enclosing two boxes has area at least their union's, since both boxes
 are literal subsets of the enclosing box) -- turned out to be provable
-*algebraically*, without measure theory, via `union_le_enclose`: case-split
+_algebraically_, without measure theory, via `union_le_enclose`: case-split
 on whether the two boxes overlap along each axis (4 cases), and in each case
 the target inequality reduces to a sum of explicit nonnegative products
 (e.g. the "both axes overlap" case reduces to `da*eb + db*ea ≥ 0` where

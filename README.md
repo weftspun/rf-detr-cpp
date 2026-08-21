@@ -22,23 +22,23 @@ backward-pass primitive tricks Phase 2 training relies on — see
 
 ## Status
 
-| Milestone | Test | Result |
-|---|---|---|
-| DINOv2-windowed-attention backbone (RFDETRNano, 4 taps) | `test_backbone` | ≤2.5e-4 (gate 5e-2) |
-| Multi-scale projector (C2f fusion, RFDETRNano) | `test_projector` | 1.0e-5 |
-| Deformable attention core (isolated, synthetic) | `test_deform_attn` | 0.0 (exact) |
-| **Object detection end-to-end (RFDETRNano)** | `test_decoder` | boxes 3.3e-4, logits 7.3e-4 |
-| **Instance segmentation end-to-end (RFDETRSegNano)** | `test_segmentation` | boxes 1.1e-2, logits 2.9e-3, masks 0.109 (gate 0.15, see `docs/decisions/segmentation.md`) |
-| **Keypoint detection end-to-end (RFDETRKeypointPreview)** | `test_keypoints` | boxes 3.5e-3, logits 9.3e-4, keypoints 4.2e-3 |
-| RFDETRBase backbone (patch_size==14, bicubic+antialias pos-embed interpolation) | `test_backbone_base` | ≤1.6e-4 |
-| **RFDETRBase object detection end-to-end** | `test_decoder_base` | boxes 1.1e-3, logits 7.2e-4 |
-| **RFDETRSmall object detection end-to-end** | `test_decoder_small` | boxes 4.5e-4, logits 9.3e-4 |
-| **RFDETRMedium object detection end-to-end** | `test_decoder_medium` | boxes 1.8e-3, logits 2.2e-3 |
-| **RFDETRLarge object detection end-to-end** | `test_decoder_large` | boxes 1.5e-3, logits 1.8e-3 |
-| **RFDETRSegSmall instance segmentation end-to-end** | `test_segmentation_small` | boxes 4.5e-4, logits 4.9e-4, masks 4.9e-2 (gate 0.15) |
-| **RFDETRSegMedium instance segmentation end-to-end** | `test_segmentation_medium` | boxes 6.2e-3, logits 4.1e-3, masks 8.4e-2 (gate 0.15) |
-| **RFDETRSegLarge instance segmentation end-to-end** | `test_segmentation_large` | boxes 2.4e-3, logits 7.1e-3, masks 7.8e-2 (gate 0.15) |
-| **RFDETRSegPreview instance segmentation end-to-end** | `test_segmentation_preview` | boxes 4.7e-4, logits 1.6e-3, masks 5.6e-2 (gate 0.15) |
+| Milestone                                                                       | Test                        | Result                                                                                     |
+| ------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------ |
+| DINOv2-windowed-attention backbone (RFDETRNano, 4 taps)                         | `test_backbone`             | ≤2.5e-4 (gate 5e-2)                                                                        |
+| Multi-scale projector (C2f fusion, RFDETRNano)                                  | `test_projector`            | 1.0e-5                                                                                     |
+| Deformable attention core (isolated, synthetic)                                 | `test_deform_attn`          | 0.0 (exact)                                                                                |
+| **Object detection end-to-end (RFDETRNano)**                                    | `test_decoder`              | boxes 3.3e-4, logits 7.3e-4                                                                |
+| **Instance segmentation end-to-end (RFDETRSegNano)**                            | `test_segmentation`         | boxes 1.1e-2, logits 2.9e-3, masks 0.109 (gate 0.15, see `docs/decisions/segmentation.md`) |
+| **Keypoint detection end-to-end (RFDETRKeypointPreview)**                       | `test_keypoints`            | boxes 3.5e-3, logits 9.3e-4, keypoints 4.2e-3                                              |
+| RFDETRBase backbone (patch_size==14, bicubic+antialias pos-embed interpolation) | `test_backbone_base`        | ≤1.6e-4                                                                                    |
+| **RFDETRBase object detection end-to-end**                                      | `test_decoder_base`         | boxes 1.1e-3, logits 7.2e-4                                                                |
+| **RFDETRSmall object detection end-to-end**                                     | `test_decoder_small`        | boxes 4.5e-4, logits 9.3e-4                                                                |
+| **RFDETRMedium object detection end-to-end**                                    | `test_decoder_medium`       | boxes 1.8e-3, logits 2.2e-3                                                                |
+| **RFDETRLarge object detection end-to-end**                                     | `test_decoder_large`        | boxes 1.5e-3, logits 1.8e-3                                                                |
+| **RFDETRSegSmall instance segmentation end-to-end**                             | `test_segmentation_small`   | boxes 4.5e-4, logits 4.9e-4, masks 4.9e-2 (gate 0.15)                                      |
+| **RFDETRSegMedium instance segmentation end-to-end**                            | `test_segmentation_medium`  | boxes 6.2e-3, logits 4.1e-3, masks 8.4e-2 (gate 0.15)                                      |
+| **RFDETRSegLarge instance segmentation end-to-end**                             | `test_segmentation_large`   | boxes 2.4e-3, logits 7.1e-3, masks 7.8e-2 (gate 0.15)                                      |
+| **RFDETRSegPreview instance segmentation end-to-end**                           | `test_segmentation_preview` | boxes 4.7e-4, logits 1.6e-3, masks 5.6e-2 (gate 0.15)                                      |
 
 **All three inference milestones are done for the Nano-family variants:
 object detection, instance segmentation, and keypoint detection.** Now

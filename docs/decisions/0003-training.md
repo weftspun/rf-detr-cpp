@@ -1,9 +1,9 @@
 # 3. Phase-2 finetuning/training — design research + LayerNorm backward fix
 
-* Status: in progress (backward prerequisite done, scope decided, loss/matching
+- Status: in progress (backward prerequisite done, scope decided, loss/matching
   implemented and validated, end-to-end demo working with a known synthetic-input
   numerical caveat, dataloader/optimizer-loop not yet implemented)
-* Date: 2026-07-18
+- Date: 2026-07-18
 
 ## Context and Problem Statement
 
@@ -18,7 +18,7 @@ C++/ggml training loop for this codebase actually require?
 
 ## Finding 1: ggml has a real training/autodiff framework — this isn't from scratch
 
-Contrary to the "no precedent" framing above at the *port* level, `ggml`
+Contrary to the "no precedent" framing above at the _port_ level, `ggml`
 itself ships genuine training infrastructure, not just inference primitives:
 
 - `ggml_set_param()` marks trainable tensors; `ggml_build_backward_expand()`
@@ -32,11 +32,11 @@ itself ships genuine training infrastructure, not just inference primitives:
   progress-bar callback already provided.
 - `ggml_cross_entropy_loss()` / `_back()` exist as first-class ops.
 
-This means the *mechanics* of a training loop (graph-based backward pass,
+This means the _mechanics_ of a training loop (graph-based backward pass,
 optimizer step, epoch/batch iteration) are provided by ggml — this port
 doesn't need to hand-roll autodiff or an optimizer.
 
-## Finding 2: this port's *existing* graphs would crash `ggml_build_backward_expand` today
+## Finding 2: this port's _existing_ graphs would crash `ggml_build_backward_expand` today
 
 Checked ggml's backward-pass switch (`ggml_compute_backward` in
 `third_party/ggml/src/ggml.c`) against every op this codebase actually
@@ -45,13 +45,13 @@ pass")`** — not a silent no-op, not a warning, a hard process abort. Ops
 with **no backward case at all**, cross-referenced against where this port
 uses them:
 
-| Op (no backward) | Used where in this port | Impact |
-|---|---|---|
-| `GGML_OP_NORM` (plain LayerNorm via `ggml_norm`) | `layer_norm_affine`, `spatial_layer_norm_affine` (`ops.h`) — used in **every** block: backbone, decoder, segmentation, keypoints | **Blocking.** This is the single most-used normalization op in the whole port. `GGML_OP_RMS_NORM` *does* have backward (`ggml_rms_norm_back`, a dedicated op) — LayerNorm's is a well-defined, structurally similar formula, just not implemented upstream yet. |
-| `GGML_OP_TOP_K` | `rfdetr_decoder`'s two-stage query selection | Not blocking in a useful sense — top-k *selection* is inherently non-differentiable (a discrete index choice); the reference DETR implementation doesn't backprop through it either, so this needs isolating from the trainable subgraph, not a ggml patch. |
-| `GGML_OP_POOL_1D` | decoder's max-over-classes reduction, segmentation's would-be use (not currently used for anything trainable-adjacent) | Same as top-k — used for score ranking, not a differentiable path in the reference implementation either. |
-| `GGML_OP_CLAMP` | `deform_attn.cpp`'s bilinear sampling (index clamping) | Expected: index computations aren't meant to be differentiable *through the index itself*, but the deformable-attention *sampling weights* (bilinear interpolation coefficients) mathematically **do** have a well-defined gradient w.r.t. the learned offsets — see Finding 3. |
-| `GGML_OP_UPSCALE`/interpolate (bicubic/bilinear) | segmentation's spatial upsample, backbone's position-embed resize | The position-embed resize isn't trained (it's a fixed conversion-time-baked matrix, see `0002-position-embed-bicubic.md`) — not blocking. Segmentation's upsample of *learned* features would need backward if segmentation is finetuned. |
+| Op (no backward)                                 | Used where in this port                                                                                                          | Impact                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GGML_OP_NORM` (plain LayerNorm via `ggml_norm`) | `layer_norm_affine`, `spatial_layer_norm_affine` (`ops.h`) — used in **every** block: backbone, decoder, segmentation, keypoints | **Blocking.** This is the single most-used normalization op in the whole port. `GGML_OP_RMS_NORM` _does_ have backward (`ggml_rms_norm_back`, a dedicated op) — LayerNorm's is a well-defined, structurally similar formula, just not implemented upstream yet.                 |
+| `GGML_OP_TOP_K`                                  | `rfdetr_decoder`'s two-stage query selection                                                                                     | Not blocking in a useful sense — top-k _selection_ is inherently non-differentiable (a discrete index choice); the reference DETR implementation doesn't backprop through it either, so this needs isolating from the trainable subgraph, not a ggml patch.                     |
+| `GGML_OP_POOL_1D`                                | decoder's max-over-classes reduction, segmentation's would-be use (not currently used for anything trainable-adjacent)           | Same as top-k — used for score ranking, not a differentiable path in the reference implementation either.                                                                                                                                                                       |
+| `GGML_OP_CLAMP`                                  | `deform_attn.cpp`'s bilinear sampling (index clamping)                                                                           | Expected: index computations aren't meant to be differentiable _through the index itself_, but the deformable-attention _sampling weights_ (bilinear interpolation coefficients) mathematically **do** have a well-defined gradient w.r.t. the learned offsets — see Finding 3. |
+| `GGML_OP_UPSCALE`/interpolate (bicubic/bilinear) | segmentation's spatial upsample, backbone's position-embed resize                                                                | The position-embed resize isn't trained (it's a fixed conversion-time-baked matrix, see `0002-position-embed-bicubic.md`) — not blocking. Segmentation's upsample of _learned_ features would need backward if segmentation is finetuned.                                       |
 
 Ops confirmed **to have** backward support and used extensively here:
 `MUL_MAT` (every `linear()`), `GET_ROWS` (deformable attention's corner
@@ -62,7 +62,7 @@ the FLOPs in the network — the gap is narrower than "nothing works," but
 `GGML_OP_NORM`'s absence alone blocks naive end-to-end backprop through
 literally every existing block.
 
-## Finding 3: deformable attention needs a *hand-derived* backward, not just missing-op patches — RESOLVED
+## Finding 3: deformable attention needs a _hand-derived_ backward, not just missing-op patches — RESOLVED
 
 `src/deform_attn.cpp`'s bilinear sampling is built from `ggml_floor` +
 `ggml_clamp` + `ggml_get_rows` + elementwise weight multiplies — a
@@ -70,8 +70,8 @@ decomposition chosen because ggml has no native `grid_sample`-equivalent
 (see `docs/decisions/decoder.md`). Even if every individual op in that
 chain had a backward case, composing them via autodiff would differentiate
 through `ggml_floor`'s corner-index computation, which is not how
-deformable attention's real gradient is defined (the *indices* aren't
-differentiable; the *bilinear weights* are, w.r.t. the continuous sampling
+deformable attention's real gradient is defined (the _indices_ aren't
+differentiable; the _bilinear weights_ are, w.r.t. the continuous sampling
 location which itself depends on the learned `sampling_offsets`).
 
 **Resolution (later session, once the decoder itself needed to be
@@ -80,6 +80,7 @@ ops with working forward kernels in ggml — they were only missing from
 `ggml_compute_backward`'s dispatch switch in `third_party/ggml/src/ggml.c`.
 Two small additions, both following exact patterns already present in that
 file:
+
 - `GGML_UNARY_OP_FLOOR`: a "noop" (zero) backward case, identical to the
   treatment ggml already gives `SGN`/`STEP` (both piecewise-constant, true
   derivative zero almost everywhere). This is what makes
@@ -111,7 +112,7 @@ matches to ~1e-4-level relative error across many indices, for the full
 correctness bug — it doesn't affect computed values): freeing
 (`ggml_free`) the graph context after a backward pass through
 `ref_points` (but not through `query`) segfaults, even though the
-gradient values are already read out and verified correct *before* the
+gradient values are already read out and verified correct _before_ the
 crash. Extensively bisected: a from-scratch minimal repro of the exact
 same floor/clamp/get_rows/multi-view/`ggml_set` computation graph does
 **not** crash on free; only the real `ms_deform_attn`-produced graph does,
@@ -129,7 +130,7 @@ fix, not attempted here) for every step that backprops through
 
 - **Hungarian matching** (`scipy.optimize.linear_sum_assignment` in
   upstream, or an equivalent): a **non-differentiable, discrete assignment**
-  between predicted queries and ground-truth targets, computed *outside*
+  between predicted queries and ground-truth targets, computed _outside_
   the gradient graph as ordinary CPU preprocessing on detached tensors —
   this is standard for every DETR-family model and is not a ggml-autodiff
   concern at all; it just needs a plain C++ (or even a small Python
@@ -144,7 +145,7 @@ fix, not attempted here) for every step that backprops through
   unverified.
 - **Segmentation loss**: (not yet read in detail — deferred, this
   research pass focused on the backward-op-support blocker first since
-  it's a hard prerequisite for *any* task's training, not task-specific).
+  it's a hard prerequisite for _any_ task's training, not task-specific).
 - **Keypoint loss**: partially read this session
   (`compute_l1_keypoint_loss`, `docs/decisions/keypoints.md`'s earlier
   research) — an L1 term + BCE (findable/visible) + a Gaussian NLL with
@@ -193,7 +194,7 @@ is a separate, opt-in function for graphs that need backward.
 full DETR (decoder) finetuning, not just the detection heads — this
 directly motivated resolving Finding 3 (deformable-attention backward),
 now done (see the updated Finding 3 section above). The original
-head-only scope decision below is kept for the historical record of *why*
+head-only scope decision below is kept for the historical record of _why_
 it was chosen at the time (it was the smallest useful slice, and it
 sidestepped exactly the two things — `ms_deform_attn` backward and
 `layer_norm_affine_diff` wiring — that a wider scope needs).
@@ -228,16 +229,17 @@ Remaining steps for this scope, in order:
    Hungarian matching (a standard O(n²·m) Kuhn-Munkres, matching upstream's
    exact `matcher.py` cost formula — checkpoint-verified against
    `scipy.optimize.linear_sum_assignment`'s own real output, not assumed)
-   + a ggml loss graph (sigmoid focal loss + L1 + GIoU). Deliberately
-   reproduces upstream's `ia_bce_loss=False` (plain `sigmoid_focal_loss`)
-   path, NOT the actual default `ia_bce_loss=True` variant — see the
-   "IA-BCE not implemented" note below for why. `ggml_sigmoid` has no
-   backward case either (same class of gap as `ggml_norm` — see Finding 2)
-   so classification probability is computed via the same
-   primitive-decomposition trick as `layer_norm_affine_diff`:
-   `sigmoid(x) = 1/(1+exp(-x))` from SCALE/EXP/ADD/DIV (all backward-
-   capable). GIoU's elementwise min/max (no native ggml op) is built from
-   `a + relu(b-a)` / `a - relu(a-b)`, both backward-capable.
+
+   - a ggml loss graph (sigmoid focal loss + L1 + GIoU). Deliberately
+     reproduces upstream's `ia_bce_loss=False` (plain `sigmoid_focal_loss`)
+     path, NOT the actual default `ia_bce_loss=True` variant — see the
+     "IA-BCE not implemented" note below for why. `ggml_sigmoid` has no
+     backward case either (same class of gap as `ggml_norm` — see Finding 2)
+     so classification probability is computed via the same
+     primitive-decomposition trick as `layer_norm_affine_diff`:
+     `sigmoid(x) = 1/(1+exp(-x))` from SCALE/EXP/ADD/DIV (all backward-
+     capable). GIoU's elementwise min/max (no native ggml op) is built from
+     `a + relu(b-a)` / `a - relu(a-b)`, both backward-capable.
 
    Validated in isolation (`tests/test_loss.cpp`) against the real
    upstream `HungarianMatcher`+`SetCriterion` on synthetic data: matched
@@ -290,12 +292,13 @@ Remaining steps for this scope, in order:
 
    Four more real bugs found and fixed while building this (beyond the
    `mean(1)` and `ggml_sigmoid` ones already listed above):
+
    - **`ggml_concat` has no backward case** (same gap class as
      `ggml_norm`/`ggml_sigmoid`) — `bbox_reparam_decode`'s final
      `ggml_concat(cxcy, wh, 0)` assembly of `pred_boxes` aborted the
      process the instant `bbox_embed`'s output needed a gradient through
      it. Fixed with `bbox_reparam_decode_diff` (`src/decoder.cpp`), which
-     assembles the same result via two `ggml_set` calls instead (SET *is*
+     assembles the same result via two `ggml_set` calls instead (SET _is_
      backward-capable) — forward-identical, confirmed by swapping it in
      unconditionally at the one call site that builds `pred_boxes` and
      re-running all 7 existing decoder/segmentation/keypoint inference
@@ -326,18 +329,19 @@ Remaining steps for this scope, in order:
      buffer reuse** — `class_embed`/`bbox_embed`'s fresh per-step tensors
      were `ggml_set_input`+`ggml_set_param`'d but not `ggml_set_output`'d.
      Once each param's last forward-graph consumer ran, the allocator was
-     free to hand its buffer to a *later* node's output — observed
+     free to hand its buffer to a _later_ node's output — observed
      directly: `head.class_w[0]` (read back after `ggml_backend_tensor_
-     get`) came back bit-identical to that step's loss scalar, and this
+get`) came back bit-identical to that step's loss scalar, and this
      happened even with `lr=0` (a true no-op update), proving loss values
      were leaking into weight buffers rather than the weights actually
      drifting from training. This is the same allocator-buffer-reuse bug
      class already found and worked around for `g.loss` itself (see
      `ggml_set_output(g.loss)`'s comment) and for the SegXLarge decoder
      graph and `test_loss.cpp`'s repeated-execution case — evidently the
-     fix needs applying to *every* tensor read back after compute, not
+     fix needs applying to _every_ tensor read back after compute, not
      just the final loss. Fixed by adding `ggml_set_output(t)` in
      `make_head_tensor` for all 8 trainable tensors.
+
 3. Dataset/dataloader beyond this one hardcoded image (COCO-format
    annotations → ggml input tensors for an arbitrary image, batching,
    iteration over a full split) — not researched yet. The single-image
@@ -359,7 +363,7 @@ allocated backward-enabled graph (`ggml_graph_reset` + `ggml_backend_
 graph_compute`, in a loop, for finite-difference perturbation checks —
 the exact pattern `tests/test_norm_backward.cpp` already used successfully
 for the simpler LayerNorm case) silently corrupted the result: a plain
-*re-evaluation at the same unperturbed point* returned 67.9 instead of the
+_re-evaluation at the same unperturbed point_ returned 67.9 instead of the
 correct 23.6 the second time the graph was computed. Rebuilding a fresh
 context/graph/allocator for every single evaluation (discarding graph
 reuse entirely) fixed it. Root cause not tracked down — likely related to

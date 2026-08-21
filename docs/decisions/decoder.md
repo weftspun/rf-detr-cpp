@@ -51,8 +51,9 @@ location's proposal via the same `bbox_reparam` delta formula used
 everywhere else in this model (`cxcy = delta[:2]*prop_wh + prop_cxcy; wh =
 exp(delta[2:])*prop_wh`).
 
-## Top-k selection: **ggml_top_k's output order is not guaranteed to match
-`torch.topk`'s**
+## Top-k selection: \*\*ggml_top_k's output order is not guaranteed to match
+
+`torch.topk`'s\*\*
 
 `torch.topk` returns indices in descending-score order; the resulting
 `pred_boxes[i]`/`pred_logits[i]` array position depends on that order.
@@ -78,6 +79,7 @@ final_cxcy = subset[:2] * ts_boxes.wh + ts_boxes.cxcy
 final_wh   = exp(subset[2:]) * ts_boxes.wh
 ref_points = concat(final_cxcy, final_wh)                   # (4, num_queries) -- fixed for every decoder layer
 ```
+
 Content queries: `tgt = query_feat.weight[:num_queries]` directly (learned,
 unrelated to the two-stage `memory`/`output_memory` gather — that gather
 result, `memory_ts`/`tgt_undetach` upstream, is training/aux-output only and

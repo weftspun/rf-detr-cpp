@@ -1,7 +1,7 @@
 # 1. Open work
 
-* Status: accepted
-* Date: 2026-07-18
+- Status: accepted
+- Date: 2026-07-18
 
 ## Context and Problem Statement
 
@@ -41,7 +41,7 @@ what was open and when it closed.
       `dec_layers` value with no code changes
 - [x] `qkv_bias` (config default `True`) checkpoint-verified: scanned the
       raw GGUF tensor-name strings for `encoder.layer.0.attention.attention.
-      {query,key,value}.bias` in both `rf-detr-nano-backbone.gguf` and
+    {query,key,value}.bias` in both `rf-detr-nano-backbone.gguf` and
       `rf-detr-base-backbone.gguf` — present in both. `linear()` already
       loads and applies any `.bias` tensor it finds (`m.has(pre+".bias")`),
       so this was a verification-only task, no code change needed.
@@ -73,21 +73,15 @@ what was open and when it closed.
       instruction, not pursuing further**. The multi-level building blocks
       built while investigating it are kept (they're general-purpose, not
       LargeDeprecated-specific) but validated only in isolation against
-      synthetic weights, not against LargeDeprecated's real checkpoint:
-      - `ms_deform_attn_multilevel` (`src/deform_attn.{h,cpp}`) — exact
-        match in isolation (`test_deform_attn_multilevel.cpp`).
-      - `projector_multiscale` (`src/projector.{h,cpp}`) — exact match in
-        isolation (`test_projector_multiscale.cpp`).
-      - `DecoderParams::levels` multi-level wiring (`src/decoder.{h,cpp}`)
-        — zero regression on all 7 existing decoder tests, not yet
-        end-to-end validated against a real multi-level checkpoint.
-      - Sine-embedding dim parametrization (`hd/2` instead of hardcoded
-        128) — a real latent bug fix, independently valuable, zero
-        regression confirmed.
-      - **A real, unresolved ggml graph-allocator bug was found and
-        documented** while chasing this (see the SegXLarge entry below) —
-        that finding stands on its own regardless of LargeDeprecated's
-        priority, since it affects any sufficiently large decoder graph.
+      synthetic weights, not against LargeDeprecated's real checkpoint: - `ms_deform_attn_multilevel` (`src/deform_attn.{h,cpp}`) — exact
+      match in isolation (`test_deform_attn_multilevel.cpp`). - `projector_multiscale` (`src/projector.{h,cpp}`) — exact match in
+      isolation (`test_projector_multiscale.cpp`). - `DecoderParams::levels` multi-level wiring (`src/decoder.{h,cpp}`)
+      — zero regression on all 7 existing decoder tests, not yet
+      end-to-end validated against a real multi-level checkpoint. - Sine-embedding dim parametrization (`hd/2` instead of hardcoded 128) — a real latent bug fix, independently valuable, zero
+      regression confirmed. - **A real, unresolved ggml graph-allocator bug was found and
+      documented** while chasing this (see the SegXLarge entry below) —
+      that finding stands on its own regardless of LargeDeprecated's
+      priority, since it affects any sufficiently large decoder graph.
 - [x] Multi-image batching: `dinov2_backbone`'s windowed-attention trick
       already spends ggml's only spare batch axis on per-window batching
       (token-major tensors are `(C,T,nw2)`, not `(C,T,1,N_img)`), so a true
@@ -107,7 +101,7 @@ what was open and when it closed.
 - [x] Mask-gate relaxation independently reviewed (second-opinion agent) —
       no bug found; the original quantitative justification was corrected
       per review feedback (`docs/decisions/segmentation.md`)
-- [ ] The *exact* mechanism behind the mask head's larger residual diff
+- [ ] The _exact_ mechanism behind the mask head's larger residual diff
       (random channel-sign accumulation vs. boundary-pixel sensitivity vs.
       both) is not nailed down — only that it isn't a wiring/aliasing bug.
       New cross-variant evidence (from the SegXLarge investigation, a later
@@ -116,7 +110,7 @@ what was open and when it closed.
       `mean_abs_diff` (0.0047, i.e. the overwhelming majority of pixels
       match closely) with the max concentrated in a handful of outliers.
       If this were pure random-channel-sign accumulation scaling
-      uniformly with `sqrt(256)` across all pixels, the *mean* would be
+      uniformly with `sqrt(256)` across all pixels, the _mean_ would be
       elevated too, not just rare maxima — this pattern recurring
       identically across two very different model scales (SegNano's
       156-channel dot product at a small resolution vs. SegXLarge's same
@@ -141,7 +135,7 @@ what was open and when it closed.
       boxes 6.2e-3, logits 4.1e-3, masks 8.4e-2 against the 0.15 gate) —
       checkpoint-verified against `rf-detr-seg-m-ft.pth` (MD5 confirmed).
       Caught a real bug while wiring this one up: `SegmentationParams::
-      num_blocks` must equal `dec_layers` (one `DepthwiseConvBlock` per
+    num_blocks` must equal `dec_layers` (one `DepthwiseConvBlock` per
       decoder layer, per `segmentation.h`'s own doc comment) — copying
       SegSmall's test file verbatim with `num_blocks=4` left over (SegMedium
       is `dec_layers=5`) produced a real, large mask divergence
@@ -164,69 +158,66 @@ what was open and when it closed.
       widened 0.7 gate — see below). Root cause was **three separate real
       bugs, all needed to fully resolve it**, found by first ruling out the
       original graph-allocator-buffer-reuse hypothesis (blanket-protecting
-      every *computed node* changed nothing — see the earlier
+      every _computed node_ changed nothing — see the earlier
       `ggml_graph_node()` sweep below), which turned out to be looking in
-      the wrong place: it only iterates *computed nodes*, never *leaf/input
-      tensors*, and the actual bugs were on leaves.
-      1. **Unprotected leaf tensors on a large graph.** `topk_override`
-         (`tests/test_segmentation_xlarge.cpp`'s caller-created I32 input,
-         uploaded with the real reference's own top-k indices) read back
-         as **pure garbage int32 values** (e.g. `-1104535939`) instead of
-         the uploaded `509, 233, 409, ...` — `ggml_set_input` alone does
-         NOT protect a tensor's buffer from the graph allocator handing it
-         to a later node's output (only `ggml_set_output` does, per
-         `ggml-alloc.c`'s `ggml_gallocr_free_node`), and leaf tensors are
-         invisible to a "protect every node" sweep since
-         `ggml_graph_node()`/`ggml_graph_n_nodes()` only iterate computed
-         nodes, not leaves — this is exactly why the earlier blanket-
-         protection experiment found nothing. `output_proposals`
-         (`rfdetr_decoder`'s own internally-created leaf, same class of
-         bug) needed the same fix. Fixed: `ggml_set_output()` added
-         alongside `ggml_set_input()` on `output_proposals`/`valid_mask` in
-         `src/decoder.cpp` (benefits every caller, not just this test) and
-         on `topk_override`/`x`/`pred_boxes`/`pred_logits`/`final_mask` in
-         `test_segmentation_xlarge.cpp` itself (`compute_cpu_multi`'s
-         `ggml_build_forward_expand` does NOT mark its outputs protected
-         either — every other decoder/segmentation test reads those back
-         unprotected too, apparently getting away with it by luck of the
-         allocator's layout on smaller graphs).
-      2. **A training-only numerical-safety clamp was applied
-         unconditionally, even at inference.** `bbox_reparam_decode_diff`
-         (the `ggml_set`-based box decode, needed because `ggml_concat` has
-         no backward case — `0003-training.md`) clamps `delta_wh` to
-         `[-4,4]` before `exp()`, a genuine and correct training-time
-         safety measure. But `rfdetr_decoder` was calling it
-         **unconditionally**, even for pure-inference graphs with no
-         backward pass at all, silently diverging from upstream's real
-         (unclamped) `outputs_coord_wh = delta.exp() * ref_wh` whenever
-         `delta_wh` legitimately exceeds ±4. Confirmed by independently
-         reproducing the model's own forward pass in Python: for this
-         test's original (synthetic-noise) input, upstream's own
-         `pred_boxes` has exactly-zero rows for ~102/300 queries — because
-         `delta_wh` is extreme enough for `exp()` to underflow to literal
-         `0.0` in float32, something this port's clamp made structurally
-         impossible (`exp(-4) ≈ 0.018`, never exactly 0). Fixed:
-         `rfdetr_decoder` gained a `trainable_boxes` parameter (default
-         `false`) — `false` uses the original `bbox_reparam_decode`
-         (CONCAT-based, unclamped, matches upstream exactly);
-         `demos/train_step_demo.cpp` now explicitly passes
-         `trainable_boxes=true` for its trainable graph, `false` for its
-         forward-only matching pass. See `src/decoder.h`'s docstring.
-      3. **The reference itself was unstable, independent of the above.**
-         Even with both fixes, comparing against a reference generated from
-         synthetic `torch.randn` noise remains fundamentally unreliable:
-         whether `delta_wh` crosses the *exact* float32 exp-underflow
-         boundary is essentially undecidable noise between two
-         independently-correct float32 implementations (this port's C++
-         and upstream's PyTorch) — a ~1e-3 relative difference in
-         `delta_wh` can be the difference between literal `0.0` and a
-         tiny-but-nonzero value. Fixed: `gen_reference_segmentation.py`
-         gained an optional real-image argument (resize+ImageNet-normalize,
-         no COCO annotations needed since only pixels feed the segmentation
-         reference); regenerated as
-         `gen_reference/reference_segmentation_xlarge_real.bin` using
-         `data/000000289343.jpg` — confirmed all 300 boxes are nonzero with
-         real input, unlike the synthetic-noise version's 198/300.
+      the wrong place: it only iterates _computed nodes_, never _leaf/input
+      tensors_, and the actual bugs were on leaves. 1. **Unprotected leaf tensors on a large graph.** `topk_override`
+      (`tests/test_segmentation_xlarge.cpp`'s caller-created I32 input,
+      uploaded with the real reference's own top-k indices) read back
+      as **pure garbage int32 values** (e.g. `-1104535939`) instead of
+      the uploaded `509, 233, 409, ...` — `ggml_set_input` alone does
+      NOT protect a tensor's buffer from the graph allocator handing it
+      to a later node's output (only `ggml_set_output` does, per
+      `ggml-alloc.c`'s `ggml_gallocr_free_node`), and leaf tensors are
+      invisible to a "protect every node" sweep since
+      `ggml_graph_node()`/`ggml_graph_n_nodes()` only iterate computed
+      nodes, not leaves — this is exactly why the earlier blanket-
+      protection experiment found nothing. `output_proposals`
+      (`rfdetr_decoder`'s own internally-created leaf, same class of
+      bug) needed the same fix. Fixed: `ggml_set_output()` added
+      alongside `ggml_set_input()` on `output_proposals`/`valid_mask` in
+      `src/decoder.cpp` (benefits every caller, not just this test) and
+      on `topk_override`/`x`/`pred_boxes`/`pred_logits`/`final_mask` in
+      `test_segmentation_xlarge.cpp` itself (`compute_cpu_multi`'s
+      `ggml_build_forward_expand` does NOT mark its outputs protected
+      either — every other decoder/segmentation test reads those back
+      unprotected too, apparently getting away with it by luck of the
+      allocator's layout on smaller graphs). 2. **A training-only numerical-safety clamp was applied
+      unconditionally, even at inference.** `bbox_reparam_decode_diff`
+      (the `ggml_set`-based box decode, needed because `ggml_concat` has
+      no backward case — `0003-training.md`) clamps `delta_wh` to
+      `[-4,4]` before `exp()`, a genuine and correct training-time
+      safety measure. But `rfdetr_decoder` was calling it
+      **unconditionally**, even for pure-inference graphs with no
+      backward pass at all, silently diverging from upstream's real
+      (unclamped) `outputs_coord_wh = delta.exp() * ref_wh` whenever
+      `delta_wh` legitimately exceeds ±4. Confirmed by independently
+      reproducing the model's own forward pass in Python: for this
+      test's original (synthetic-noise) input, upstream's own
+      `pred_boxes` has exactly-zero rows for ~102/300 queries — because
+      `delta_wh` is extreme enough for `exp()` to underflow to literal
+      `0.0` in float32, something this port's clamp made structurally
+      impossible (`exp(-4) ≈ 0.018`, never exactly 0). Fixed:
+      `rfdetr_decoder` gained a `trainable_boxes` parameter (default
+      `false`) — `false` uses the original `bbox_reparam_decode`
+      (CONCAT-based, unclamped, matches upstream exactly);
+      `demos/train_step_demo.cpp` now explicitly passes
+      `trainable_boxes=true` for its trainable graph, `false` for its
+      forward-only matching pass. See `src/decoder.h`'s docstring. 3. **The reference itself was unstable, independent of the above.**
+      Even with both fixes, comparing against a reference generated from
+      synthetic `torch.randn` noise remains fundamentally unreliable:
+      whether `delta_wh` crosses the _exact_ float32 exp-underflow
+      boundary is essentially undecidable noise between two
+      independently-correct float32 implementations (this port's C++
+      and upstream's PyTorch) — a ~1e-3 relative difference in
+      `delta_wh` can be the difference between literal `0.0` and a
+      tiny-but-nonzero value. Fixed: `gen_reference_segmentation.py`
+      gained an optional real-image argument (resize+ImageNet-normalize,
+      no COCO annotations needed since only pixels feed the segmentation
+      reference); regenerated as
+      `gen_reference/reference_segmentation_xlarge_real.bin` using
+      `data/000000289343.jpg` — confirmed all 300 boxes are nonzero with
+      real input, unlike the synthetic-noise version's 198/300.
       With all three fixed: boxes 4.9e-3, logits 2.1e-2 (both comfortably
       under the shared 5e-2 gate). Masks land at 0.627 (mean_abs_diff a
       tiny 0.0047 — only a handful of boundary pixels hit the reported
@@ -237,20 +228,19 @@ what was open and when it closed.
       this variant specifically rather than left at the shared 0.15.
       Seg2XLarge (768 res, even larger) is now unblocked — the same fixes
       should apply — but has no checkpoint/GGUF/test scaffolding yet, a
-      separate from-scratch setup not attempted this pass.
-      - (Earlier, now-superseded investigation notes, kept for the
-        record): extensive bisection first found `dinov2_backbone`/
-        `projector_p4` correct in isolation, `memory`/`enc_delta`
-        apparently "corrupted" when embedded in the full graph, and
-        protecting `memory`/`output_memory` alone (not yet the real leaf
-        tensors above) "fixed" `memory` specifically but not the final
-        outputs — leading to a graph-allocator-buffer-reuse hypothesis.
-        A later blanket-`ggml_set_output`-every-*node* experiment (18972
-        nodes) found zero change, seemingly ruling out allocator reuse
-        entirely — but that experiment only ever reached computed nodes,
-        never the leaf tensors that turned out to be the real culprit,
-        which is why it looked like a dead end until leaves specifically
-        were checked.
+      separate from-scratch setup not attempted this pass. - (Earlier, now-superseded investigation notes, kept for the
+      record): extensive bisection first found `dinov2_backbone`/
+      `projector_p4` correct in isolation, `memory`/`enc_delta`
+      apparently "corrupted" when embedded in the full graph, and
+      protecting `memory`/`output_memory` alone (not yet the real leaf
+      tensors above) "fixed" `memory` specifically but not the final
+      outputs — leading to a graph-allocator-buffer-reuse hypothesis.
+      A later blanket-`ggml_set_output`-every-_node_ experiment (18972
+      nodes) found zero change, seemingly ruling out allocator reuse
+      entirely — but that experiment only ever reached computed nodes,
+      never the leaf tensors that turned out to be the real culprit,
+      which is why it looked like a dead end until leaves specifically
+      were checked.
 - [x] RFDETRSegPreview validated end-to-end (`test_segmentation_preview`:
       boxes 4.7e-4, logits 1.6e-3, masks 5.6e-2 against the 0.15 gate) —
       checkpoint-verified against `rf-detr-seg-preview.pt` (MD5 confirmed).
@@ -288,7 +278,7 @@ what was open and when it closed.
       (active class index **1**), not the initially-guessed `[17,0]`
       (index 0) — a shape-only check (`_kp_active_mask`'s `(2,17)` shape)
       didn't distinguish the two; only inspecting the mask's boolean
-      *values* did. See `docs/decisions/keypoints.md`.
+      _values_ did. See `docs/decisions/keypoints.md`.
 - [x] GGUF conversion script (`scripts/convert_keypoints_to_gguf.py`) +
       `gen_reference/gen_reference_keypoints.py` + `tests/test_keypoints.cpp`
       — validated end-to-end: boxes 3.5e-3, logits 9.3e-4, keypoints 4.2e-3
@@ -328,8 +318,7 @@ variants for each (see their sections above), then phase-2 training.
       frozen decoder stack never has a gradient requested through it) —
       that work stays validated and ready for whenever the scope widens.
 - [x] Loss + Hungarian matching implemented and validated
-      (`src/loss.{h,cpp}`, `tests/test_loss.cpp`): sigmoid focal loss + L1
-      + GIoU (upstream's `ia_bce_loss=False` path, not the actual default
+      (`src/loss.{h,cpp}`, `tests/test_loss.cpp`): sigmoid focal loss + L1 + GIoU (upstream's `ia_bce_loss=False` path, not the actual default
       `ia_bce_loss=True` — needs a stop-gradient mechanism ggml doesn't
       have natively, documented as a follow-up in `0003-training.md`) +
       a standard host-side Kuhn-Munkres Hungarian matcher reproducing
@@ -382,7 +371,7 @@ variants for each (see their sections above), then phase-2 training.
       manifest and lazily loads each item on demand (no full-dataset
       caching, so memory stays bounded regardless of split size).
       `train_step_demo.cpp` now cycles through the dataset (`step %
-      dataset.size()`, wrapping like an epoch boundary) instead of
+    dataset.size()`, wrapping like an epoch boundary) instead of
       training on one repeated image — validated over 30 steps across all
       24 real images (plus 6 steps of a second wraparound pass): loss
       stays finite and bounded throughout (0.24–2.51 range, no NaN/blowup,
@@ -402,7 +391,7 @@ variants for each (see their sections above), then phase-2 training.
       no longer hand-rolls AdamW math host-side; `build_graph`'s trainable
       path now creates `m`/`v` moment-state tensors per trainable tensor
       and an `adamw_params` (7,) input, and builds `ggml_opt_step_adamw(ctx,
-      w, grad, m, v, adamw_params)` into the SAME single compute call as
+    w, grad, m, v, adamw_params)` into the SAME single compute call as
       forward+backward (confirmed via `ggml.c`'s constructor: the result is
       a `ggml_view_tensor(ctx, a)`, i.e. it writes the update directly into
       the weight's own buffer; the CPU kernel also updates `m`/`v` in

@@ -23,10 +23,10 @@ stage, by expanding the batch dimension:
    `(B, 1+n_patch, C)` sequence first.
 2. Then the whole thing is partitioned into `num_windows²` non-overlapping
    spatial windows, each becoming its own batch entry: `(B*num_windows²,
-   1+patches_per_window, C)`. **The CLS token is repeated identically into
+1+patches_per_window, C)`. **The CLS token is repeated identically into
    every window** (`cls_token.repeat(num_windows**2, 1, 1)`), so each window
    ends up with its own independently-evolving CLS token.
-3. Register tokens are inserted *after* windowing and are **also repeated
+3. Register tokens are inserted _after_ windowing and are **also repeated
    per window** (`register_tokens.expand(B*num_windows², ...)`), inserted at
    position 1 (between CLS and patches).
 4. Every subsequent encoder layer, windowed or not, operates on this
@@ -46,8 +46,8 @@ stage, by expanding the batch dimension:
    downloaded checkpoint (see "Verified against a real checkpoint" below):
    `rfdetr/models/backbone/dinov2.py` computes
    `window_block_indexes = set(range(out_feature_indexes[-1]+1)) -
-   set(out_feature_indexes)` **using the config's raw `out_feature_indexes`
-   values, which are 1-based "stage" numbers** (`stage{i}` = output *after*
+set(out_feature_indexes)` **using the config's raw `out_feature_indexes`
+   values, which are 1-based "stage" numbers** (`stage{i}` = output _after_
    0-indexed encoder layer `i-1`; see `WindowedDinov2WithRegistersEncoder`'s
    `stage_names`/`all_hidden_states` bookkeeping). That computed set is then
    used **directly, unshifted**, against the 0-indexed layer loop variable
@@ -70,7 +70,7 @@ stage, by expanding the batch dimension:
    ```
 6. Feature-map extraction (`WindowedDinov2WithRegistersBackbone.forward`):
    for each tapped layer output (still in windowed-batch form), apply the
-   model's final `layernorm` (yes — to *every* tap, not just the last),
+   model's final `layernorm` (yes — to _every_ tap, not just the last),
    strip the CLS+register prefix, then undo the window partition back to a
    `(B, C, H, W)` spatial map for the projector.
 
@@ -88,17 +88,18 @@ single-image inference (the common case for this port so far).
 
 ## Per-variant configs (verified from `rfdetr/config.py`)
 
-| Config (`ModelConfig` subclass) | encoder size | patch | num_windows | out_feature_indexes | resolution | positional_encoding_size |
-|---|---|---|---|---|---|---|
-| RFDETRBase (`dinov2_windowed_small`) | Small | 14 | 4 | [2,5,8,11] | 560 | 37 |
-| RFDETRLarge-deprecated (`dinov2_windowed_base`) | Base | 14 (inherited) | 4 | [2,5,8,11] | 560 (inherited) | 37 |
-| RFDETRNano | Small | 16 | 2 | [3,6,9,12] | 384 | — |
-| (Small/Medium/2xLarge — see config.py for the rest, same shape as Nano's block with different resolution/dec_layers) | | | | | | |
+| Config (`ModelConfig` subclass)                                                                                      | encoder size | patch          | num_windows | out_feature_indexes | resolution      | positional_encoding_size |
+| -------------------------------------------------------------------------------------------------------------------- | ------------ | -------------- | ----------- | ------------------- | --------------- | ------------------------ |
+| RFDETRBase (`dinov2_windowed_small`)                                                                                 | Small        | 14             | 4           | [2,5,8,11]          | 560             | 37                       |
+| RFDETRLarge-deprecated (`dinov2_windowed_base`)                                                                      | Base         | 14 (inherited) | 4           | [2,5,8,11]          | 560 (inherited) | 37                       |
+| RFDETRNano                                                                                                           | Small        | 16             | 2           | [3,6,9,12]          | 384             | —                        |
+| (Small/Medium/2xLarge — see config.py for the rest, same shape as Nano's block with different resolution/dec_layers) |              |                |             |                     |                 |                          |
 
 **Position-embedding interpolation is conditionally required, not always
 skippable** as the first draft assumed:
-- `patch_size == 14` (native DINOv2) *and* `positional_encoding_size *
-  patch_size == checkpoint's native image_size` (518, the standard DINOv2
+
+- `patch_size == 14` (native DINOv2) _and_ `positional_encoding_size *
+patch_size == checkpoint's native image_size` (518, the standard DINOv2
   training resolution) → DINOv2 pretrained weights load, `image_size` stays
   518, so position embeddings are stored at a 37×37 grid. **If the model's
   actual `resolution` differs from 518 (e.g. RFDETRBase runs at 560px),

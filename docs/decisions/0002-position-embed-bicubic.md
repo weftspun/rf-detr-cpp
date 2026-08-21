@@ -1,7 +1,7 @@
 # 2. Position-embedding bicubic+antialias interpolation (RFDETRBase)
 
-* Status: accepted
-* Date: 2026-07-18
+- Status: accepted
+- Date: 2026-07-18
 
 ## Context and Problem Statement
 
@@ -23,7 +23,7 @@ ggml's bicubic mode exists but **cannot be combined with antialiasing** —
 `ggml_interpolate` hard-asserts `GGML_SCALE_FLAG_ANTIALIAS` is only valid
 with `GGML_SCALE_MODE_BILINEAR` (confirmed by triggering the assert
 directly). And the difference isn't negligible: even though this is
-*upsampling* (37→40, where classic image-processing antialiasing
+_upsampling_ (37→40, where classic image-processing antialiasing
 intuitively "shouldn't matter" since there's no decimation) — PyTorch's own
 antialias path measurably diverges from its non-antialias path here (max
 abs diff 0.297 on a synthetic test), and ggml's plain bicubic matches
@@ -58,7 +58,7 @@ no transcription risk.
 **Extraction method** (`extract_bicubic_aa_resize_matrix` in
 `scripts/convert_dinov2_to_gguf.py`): since PyTorch's bicubic-AA resize is
 separable (independent 1-D filters along each axis), probe it with an
-identity-impulse input per source index, using a *constant* (not
+identity-impulse input per source index, using a _constant_ (not
 degenerate size-1) value along the orthogonal axis so a sum-to-1-normalized
 filter leaves it invariant — this isolates one axis's exact filter response
 without a degenerate-dimension edge case (an earlier attempt using a
