@@ -41,7 +41,7 @@ what was open and when it closed.
       `dec_layers` value with no code changes
 - [x] `qkv_bias` (config default `True`) checkpoint-verified: scanned the
       raw GGUF tensor-name strings for `encoder.layer.0.attention.attention.
-    {query,key,value}.bias` in both `rf-detr-nano-backbone.gguf` and
+{query,key,value}.bias` in both `rf-detr-nano-backbone.gguf` and
       `rf-detr-base-backbone.gguf` — present in both. `linear()` already
       loads and applies any `.bias` tensor it finds (`m.has(pre+".bias")`),
       so this was a verification-only task, no code change needed.
@@ -135,7 +135,7 @@ what was open and when it closed.
       boxes 6.2e-3, logits 4.1e-3, masks 8.4e-2 against the 0.15 gate) —
       checkpoint-verified against `rf-detr-seg-m-ft.pth` (MD5 confirmed).
       Caught a real bug while wiring this one up: `SegmentationParams::
-    num_blocks` must equal `dec_layers` (one `DepthwiseConvBlock` per
+num_blocks` must equal `dec_layers` (one `DepthwiseConvBlock` per
       decoder layer, per `segmentation.h`'s own doc comment) — copying
       SegSmall's test file verbatim with `num_blocks=4` left over (SegMedium
       is `dec_layers=5`) produced a real, large mask divergence
@@ -219,7 +219,7 @@ what was open and when it closed.
       `data/000000289343.jpg` — confirmed all 300 boxes are nonzero with
       real input, unlike the synthetic-noise version's 198/300.
       With all three fixed: boxes 4.9e-3, logits 2.1e-2 (both comfortably
-      under the shared 5e-2 gate). Masks land at 0.627 (mean_abs_diff a
+      under the shared 5e-2 gate). Masks land at 0.627 (mean*abs_diff a
       tiny 0.0047 — only a handful of boundary pixels hit the reported
       max), consistent with the same "amplified decoder float-drift"
       phenomenon documented for every other segmentation variant
@@ -235,7 +235,7 @@ what was open and when it closed.
       protecting `memory`/`output_memory` alone (not yet the real leaf
       tensors above) "fixed" `memory` specifically but not the final
       outputs — leading to a graph-allocator-buffer-reuse hypothesis.
-      A later blanket-`ggml_set_output`-every-_node_ experiment (18972
+      A later blanket-`ggml_set_output`-every-\_node* experiment (18972
       nodes) found zero change, seemingly ruling out allocator reuse
       entirely — but that experiment only ever reached computed nodes,
       never the leaf tensors that turned out to be the real culprit,
@@ -371,7 +371,7 @@ variants for each (see their sections above), then phase-2 training.
       manifest and lazily loads each item on demand (no full-dataset
       caching, so memory stays bounded regardless of split size).
       `train_step_demo.cpp` now cycles through the dataset (`step %
-    dataset.size()`, wrapping like an epoch boundary) instead of
+dataset.size()`, wrapping like an epoch boundary) instead of
       training on one repeated image — validated over 30 steps across all
       24 real images (plus 6 steps of a second wraparound pass): loss
       stays finite and bounded throughout (0.24–2.51 range, no NaN/blowup,
@@ -391,7 +391,7 @@ variants for each (see their sections above), then phase-2 training.
       no longer hand-rolls AdamW math host-side; `build_graph`'s trainable
       path now creates `m`/`v` moment-state tensors per trainable tensor
       and an `adamw_params` (7,) input, and builds `ggml_opt_step_adamw(ctx,
-    w, grad, m, v, adamw_params)` into the SAME single compute call as
+w, grad, m, v, adamw_params)` into the SAME single compute call as
       forward+backward (confirmed via `ggml.c`'s constructor: the result is
       a `ggml_view_tensor(ctx, a)`, i.e. it writes the update directly into
       the weight's own buffer; the CPU kernel also updates `m`/`v` in

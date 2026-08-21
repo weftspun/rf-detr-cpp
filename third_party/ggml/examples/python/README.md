@@ -72,7 +72,7 @@ export GGML_LIBRARY=$PWD/llama_build/libggml_shared.so
 
 #### (Optional) Regenerate the bindings and stubs
 
-If you added or changed any signatures of the C API, you'll want to regenerate the bindings ([ggml/cffi.py](./ggml/cffi.py)) and stubs ([ggml/**init**.pyi](./ggml/__init__.pyi)).
+If you added or changed any signatures of the C API, you'll want to regenerate the bindings ([ggml/cffi.py](./ggml/cffi.py)) and stubs ([ggml/__init__.pyi](./ggml/__init__.pyi)).
 
 Luckily it's a one-liner using [regenerate.py](./regenerate.py):
 

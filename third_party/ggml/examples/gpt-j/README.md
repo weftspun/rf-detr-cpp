@@ -149,6 +149,7 @@ sys.    0m7.103s
 The high level implementation of the model is contained in the [main.cpp](main.cpp) file. The core computations are
 performed by the [ggml](https://github.com/ggerganov/ggml/blob/master/include/ggml.h) library.
 
+
 #### Matrix multiplication
 
 The most performance critical part of the implementation is of course the matrix multiplication routine. 99% of the time
@@ -162,6 +163,7 @@ These instructions allow each core to operate simultaneously on 64 16-bit floats
 some trials this was the most efficient code for dot product of a row and column that I could come up with. Combined
 with the parallel computation on 8 CPU threads, I believe I'm close to the maximum performance that one could possibly
 get on the M1 CPU. Still, I'm curious to know if there is a more efficient way to implement this.
+
 
 #### Attempt to use the M1 GPU
 
@@ -225,6 +227,7 @@ First, you need to download the full GPT-J model from here: https://huggingface.
 Note that the full model is quite big - about 72 GB. After you download it, you need to convert it to ggml format using
 the [convert-h5-to-ggml.py](convert-h5-to-ggml.py) script. This will generate the `ggml-model.bin` file, which you can
 then use with the `gpt-j` program.
+
 
 ## GPT-2
 

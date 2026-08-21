@@ -196,7 +196,7 @@ this checkpoint doesn't use it.
    FFN, same shape as the main decoder's FFN.
 
 Returns `(tgt, keypoint_tgt)` — both feed into the next layer (unlike the
-main `hs`/pred_boxes/pred_logits, which only need the _last_ layer,
+main `hs`/pred*boxes/pred_logits, which only need the \_last* layer,
 `TransformerDecoder.forward` collects **all** layers' `keypoint_tgt` into
 `intermediate_keypoints` — check whether the keypoint head, like
 segmentation, needs all layers or just the last one before assuming

@@ -23,35 +23,35 @@ The key difference between GGJT and GGUF is the use of a key-value structure for
 GGUF follow a naming convention of `[<Sidecar>]<BaseName><SizeLabel><FineTune><Version><Encoding><Type><Shard>.gguf` where each component is delimitated by a `-` if present. Ultimately this is intended to make it easier for humans to at a glance get the most important details of a model. It is not intended to be perfectly parsable in the field due to the diversity of existing gguf filenames.
 
 The components are:
-
 1. **Sidecar**: (Optional) Prefix marking the file as an auxiliary module loaded alongside a base model, rather than a standalone model. When present, sits at the very front of the filename followed by `-`. Lowercase by convention.
-   - `mmproj` : Multimodal projector (vision/audio encoder and projection layer for use with a base LLM)
-   - `mtp` : Multi-Token Prediction heads (speculative-decoding draft module, intended to be loaded alongside a base model of matching architecture and version). Note that oftentimes the MTP weights can be distributed inside the base model, in which case there is no separate `mtp-` sidecar file.
+    - `mmproj` : Multimodal projector (vision/audio encoder and projection layer for use with a base LLM)
+    - `mtp` : Multi-Token Prediction heads (speculative-decoding draft module, intended to be loaded alongside a base model of matching architecture and version). Note that oftentimes the MTP weights can be distributed inside the base model, in which case there is no separate `mtp-` sidecar file.
 1. **BaseName**: A descriptive name for the model base type or architecture.
-   - This can be derived from gguf metadata `general.basename` substituting spaces for dashes.
+    - This can be derived from gguf metadata `general.basename` substituting spaces for dashes.
 1. **SizeLabel**: Parameter weight class (useful for leader boards) represented as `<expertCount>x<count><scale-prefix>`
-   - This can be derived from gguf metadata `general.size_label` if available or calculated if missing.
-   - Rounded decimal point is supported in count with a single letter scale prefix to assist in floating point exponent shown below
-     - `Q`: Quadrillion parameters.
-     - `T`: Trillion parameters.
-     - `B`: Billion parameters.
-     - `M`: Million parameters.
-     - `K`: Thousand parameters.
-   - Additional `-<attributes><count><scale-prefix>` can be appended as needed to indicate other attributes of interest
+    - This can be derived from gguf metadata `general.size_label` if available or calculated if missing.
+    - Rounded decimal point is supported in count with a single letter scale prefix to assist in floating point exponent shown below
+      - `Q`: Quadrillion parameters.
+      - `T`: Trillion parameters.
+      - `B`: Billion parameters.
+      - `M`: Million parameters.
+      - `K`: Thousand parameters.
+    - Additional `-<attributes><count><scale-prefix>` can be appended as needed to indicate other attributes of interest
 1. **FineTune**: A descriptive name for the model fine tuning goal (e.g. Chat, Instruct, etc...)
-   - This can be derived from gguf metadata `general.finetune` substituting spaces for dashes.
+    - This can be derived from gguf metadata `general.finetune` substituting spaces for dashes.
 1. **Version**: (Optional) Denotes the model version number, formatted as `v<Major>.<Minor>`
-   - If model is missing a version number then assume `v1.0` (First Public Release)
-   - This can be derived from gguf metadata `general.version`
+    - If model is missing a version number then assume `v1.0` (First Public Release)
+    - This can be derived from gguf metadata `general.version`
 1. **Encoding**: Indicates the weights encoding scheme that was applied to the model. Content, type mixture and arrangement however are determined by user code and can vary depending on project needs.
 1. **Type**: Indicates the kind of gguf file and the intended purpose for it
-   - If missing, then file is by default a typical gguf tensor model file
-   - `LoRA` : GGUF file is a LoRA adapter
-   - `vocab` : GGUF file with only vocab data and metadata
+    - If missing, then file is by default a typical gguf tensor model file
+    - `LoRA` : GGUF file is a LoRA adapter
+    - `vocab` : GGUF file with only vocab data and metadata
 1. **Shard**: (Optional) Indicates and denotes that the model has been split into multiple shards, formatted as `<ShardNum>-of-<ShardTotal>`.
-   - _ShardNum_ : Shard position in this model. Must be 5 digits padded by zeros.
-     - Shard number always starts from `00001` onwards (e.g. First shard always starts at `00001-of-XXXXX` rather than `00000-of-XXXXX`).
-   - _ShardTotal_ : Total number of shards in this model. Must be 5 digits padded by zeros.
+    - *ShardNum* : Shard position in this model. Must be 5 digits padded by zeros.
+      - Shard number always starts from `00001` onwards (e.g. First shard always starts at `00001-of-XXXXX` rather than `00000-of-XXXXX`).
+    - *ShardTotal* : Total number of shards in this model. Must be 5 digits padded by zeros.
+
 
 #### Validating Above Naming Convention
 
@@ -61,161 +61,68 @@ To validate you can use this regular expression `^(?:(?<Sidecar>mmproj|mtp)-)?(?
 
 For example:
 
-- `Mixtral-8x7B-v0.1-KQ2.gguf`:
+  * `Mixtral-8x7B-v0.1-KQ2.gguf`:
+    - Model Name: Mixtral
+    - Expert Count: 8
+    - Parameter Count: 7B
+    - Version Number: v0.1
+    - Weight Encoding Scheme: KQ2
 
-  - Model Name: Mixtral
-  - Expert Count: 8
-  - Parameter Count: 7B
-  - Version Number: v0.1
-  - Weight Encoding Scheme: KQ2
+  * `Hermes-2-Pro-Llama-3-8B-F16.gguf`:
+    - Model Name: Hermes 2 Pro Llama 3
+    - Expert Count: 0
+    - Parameter Count: 8B
+    - Version Number: v1.0
+    - Weight Encoding Scheme: F16
+    - Shard: N/A
 
-- `Hermes-2-Pro-Llama-3-8B-F16.gguf`:
+  * `Grok-100B-v1.0-Q4_0-00003-of-00009.gguf`
+    - Model Name: Grok
+    - Expert Count: 0
+    - Parameter Count: 100B
+    - Version Number: v1.0
+    - Weight Encoding Scheme: Q4_0
+    - Shard: 3 out of 9 total shards
 
-  - Model Name: Hermes 2 Pro Llama 3
-  - Expert Count: 0
-  - Parameter Count: 8B
-  - Version Number: v1.0
-  - Weight Encoding Scheme: F16
-  - Shard: N/A
+  * `mtp-Qwen3-27B-v1.0-Q4_K_M.gguf`
+    - Sidecar: mtp (Multi-Token Prediction draft module)
+    - Model Name: Qwen3
+    - Expert Count: 0
+    - Parameter Count: 27B (of the main model — sidecar tensors are smaller)
+    - Version Number: v1.0
+    - Weight Encoding Scheme: Q4_K_M
 
-- `Grok-100B-v1.0-Q4_0-00003-of-00009.gguf`
+  * `mmproj-Qwen2-VL-7B-v1.0-F16.gguf`
+    - Sidecar: mmproj (multimodal projector)
+    - Model Name: Qwen2-VL
+    - Expert Count: 0
+    - Parameter Count: 7B (of the main model — sidecar tensors are smaller)
+    - Version Number: v1.0
+    - Weight Encoding Scheme: F16
 
-  - Model Name: Grok
-  - Expert Count: 0
-  - Parameter Count: 100B
-  - Version Number: v1.0
-  - Weight Encoding Scheme: Q4_0
-  - Shard: 3 out of 9 total shards
-
-- `mtp-Qwen3-27B-v1.0-Q4_K_M.gguf`
-
-  - Sidecar: mtp (Multi-Token Prediction draft module)
-  - Model Name: Qwen3
-  - Expert Count: 0
-  - Parameter Count: 27B (of the main model — sidecar tensors are smaller)
-  - Version Number: v1.0
-  - Weight Encoding Scheme: Q4_K_M
-
-- `mmproj-Qwen2-VL-7B-v1.0-F16.gguf`
-  - Sidecar: mmproj (multimodal projector)
-  - Model Name: Qwen2-VL
-  - Expert Count: 0
-  - Parameter Count: 7B (of the main model — sidecar tensors are smaller)
-  - Version Number: v1.0
-  - Weight Encoding Scheme: F16
 
 <details><summary>Example Node.js Regex Function</summary>
 
 ```js
 #!/usr/bin/env node
-const ggufRegex =
-  /^(?:(?<Sidecar>mmproj|mtp)-)?(?<BaseName>[A-Za-z0-9\s]*(?:(?:-(?:(?:[A-Za-z\s][A-Za-z0-9\s]*)|(?:[0-9\s]*)))*))-(?:(?<SizeLabel>(?:\d+x)?(?:\d+\.)?\d+[A-Za-z](?:-[A-Za-z]+(\d+\.)?\d+[A-Za-z]+)?)(?:-(?<FineTune>[A-Za-z0-9\s-]+))?)?-(?:(?<Version>v\d+(?:\.\d+)*))(?:-(?<Encoding>(?!LoRA|vocab)[\w_]+))?(?:-(?<Type>LoRA|vocab))?(?:-(?<Shard>\d{5}-of-\d{5}))?\.gguf$/;
+const ggufRegex = /^(?:(?<Sidecar>mmproj|mtp)-)?(?<BaseName>[A-Za-z0-9\s]*(?:(?:-(?:(?:[A-Za-z\s][A-Za-z0-9\s]*)|(?:[0-9\s]*)))*))-(?:(?<SizeLabel>(?:\d+x)?(?:\d+\.)?\d+[A-Za-z](?:-[A-Za-z]+(\d+\.)?\d+[A-Za-z]+)?)(?:-(?<FineTune>[A-Za-z0-9\s-]+))?)?-(?:(?<Version>v\d+(?:\.\d+)*))(?:-(?<Encoding>(?!LoRA|vocab)[\w_]+))?(?:-(?<Type>LoRA|vocab))?(?:-(?<Shard>\d{5}-of-\d{5}))?\.gguf$/;
 
 function parseGGUFFilename(filename) {
   const match = ggufRegex.exec(filename);
-  if (!match) return null;
-  const {
-    Sidecar = null,
-    BaseName = null,
-    SizeLabel = null,
-    FineTune = null,
-    Version = "v1.0",
-    Encoding = null,
-    Type = null,
-    Shard = null,
-  } = match.groups;
-  return {
-    Sidecar: Sidecar,
-    BaseName: BaseName,
-    SizeLabel: SizeLabel,
-    FineTune: FineTune,
-    Version: Version,
-    Encoding: Encoding,
-    Type: Type,
-    Shard: Shard,
-  };
+  if (!match)
+    return null;
+  const {Sidecar = null, BaseName = null, SizeLabel = null, FineTune = null, Version = "v1.0", Encoding = null, Type = null, Shard = null} = match.groups;
+  return {Sidecar: Sidecar, BaseName: BaseName, SizeLabel: SizeLabel, FineTune: FineTune, Version: Version, Encoding: Encoding, Type: Type, Shard: Shard};
 }
 
 const testCases = [
-  {
-    filename: "Mixtral-8x7B-v0.1-KQ2.gguf",
-    expected: {
-      Sidecar: null,
-      BaseName: "Mixtral",
-      SizeLabel: "8x7B",
-      FineTune: null,
-      Version: "v0.1",
-      Encoding: "KQ2",
-      Type: null,
-      Shard: null,
-    },
-  },
-  {
-    filename: "Grok-100B-v1.0-Q4_0-00003-of-00009.gguf",
-    expected: {
-      Sidecar: null,
-      BaseName: "Grok",
-      SizeLabel: "100B",
-      FineTune: null,
-      Version: "v1.0",
-      Encoding: "Q4_0",
-      Type: null,
-      Shard: "00003-of-00009",
-    },
-  },
-  {
-    filename: "Hermes-2-Pro-Llama-3-8B-v1.0-F16.gguf",
-    expected: {
-      Sidecar: null,
-      BaseName: "Hermes-2-Pro-Llama-3",
-      SizeLabel: "8B",
-      FineTune: null,
-      Version: "v1.0",
-      Encoding: "F16",
-      Type: null,
-      Shard: null,
-    },
-  },
-  {
-    filename: "Phi-3-mini-3.8B-ContextLength4k-instruct-v1.0.gguf",
-    expected: {
-      Sidecar: null,
-      BaseName: "Phi-3-mini",
-      SizeLabel: "3.8B-ContextLength4k",
-      FineTune: "instruct",
-      Version: "v1.0",
-      Encoding: null,
-      Type: null,
-      Shard: null,
-    },
-  },
-  {
-    filename: "mtp-Qwen3-27B-v1.0-Q4_K_M.gguf",
-    expected: {
-      Sidecar: "mtp",
-      BaseName: "Qwen3",
-      SizeLabel: "27B",
-      FineTune: null,
-      Version: "v1.0",
-      Encoding: "Q4_K_M",
-      Type: null,
-      Shard: null,
-    },
-  },
-  {
-    filename: "mmproj-Qwen2-VL-7B-v1.0-F16.gguf",
-    expected: {
-      Sidecar: "mmproj",
-      BaseName: "Qwen2-VL",
-      SizeLabel: "7B",
-      FineTune: null,
-      Version: "v1.0",
-      Encoding: "F16",
-      Type: null,
-      Shard: null,
-    },
-  },
-  { filename: "not-a-known-arrangement.gguf", expected: null },
+  {filename: 'Mixtral-8x7B-v0.1-KQ2.gguf',                         expected: { Sidecar: null,   BaseName: 'Mixtral',              SizeLabel: '8x7B',     FineTune: null, Version: 'v0.1',   Encoding: 'KQ2',    Type: null, Shard: null}},
+  {filename: 'Grok-100B-v1.0-Q4_0-00003-of-00009.gguf',            expected: { Sidecar: null,   BaseName: 'Grok',                 SizeLabel: '100B',     FineTune: null, Version: 'v1.0',   Encoding: 'Q4_0',   Type: null, Shard: "00003-of-00009"}},
+  {filename: 'Hermes-2-Pro-Llama-3-8B-v1.0-F16.gguf',              expected: { Sidecar: null,   BaseName: 'Hermes-2-Pro-Llama-3', SizeLabel: '8B',       FineTune: null, Version: 'v1.0',   Encoding: 'F16',    Type: null, Shard: null}},
+  {filename: 'Phi-3-mini-3.8B-ContextLength4k-instruct-v1.0.gguf', expected: { Sidecar: null,   BaseName: 'Phi-3-mini',           SizeLabel: '3.8B-ContextLength4k', FineTune: 'instruct', Version: 'v1.0', Encoding: null,    Type: null, Shard: null}},
+  {filename: 'mtp-Qwen3-27B-v1.0-Q4_K_M.gguf',                     expected: { Sidecar: 'mtp',  BaseName: 'Qwen3',                SizeLabel: '27B',      FineTune: null, Version: 'v1.0',   Encoding: 'Q4_K_M', Type: null, Shard: null}},
+  {filename: 'mmproj-Qwen2-VL-7B-v1.0-F16.gguf',                   expected: { Sidecar: 'mmproj', BaseName: 'Qwen2-VL',           SizeLabel: '7B',       FineTune: null, Version: 'v1.0',   Encoding: 'F16',    Type: null, Shard: null}},
+  {filename: 'not-a-known-arrangement.gguf',                       expected: null},
 ];
 
 testCases.forEach(({ filename, expected }) => {
@@ -223,18 +130,19 @@ testCases.forEach(({ filename, expected }) => {
   const passed = JSON.stringify(result) === JSON.stringify(expected);
   console.log(`${filename}: ${passed ? "PASS" : "FAIL"}`);
   if (!passed) {
-    console.log(result);
-    console.log(expected);
+      console.log(result);
+      console.log(expected);
   }
 });
 ```
 
 </details>
 
+
 ### File Structure
 
 ![image](https://github.com/ggerganov/ggml/assets/1991296/c3623641-3a1d-408e-bfaf-1b7c4e16aa63)
-_diagram by [@mishig25](https://github.com/mishig25) (GGUF v3)_
+*diagram by [@mishig25](https://github.com/mishig25) (GGUF v3)*
 
 GGUF files are structured as follows. They use a global alignment specified in the `general.alignment` metadata field, referred to as `ALIGNMENT` below. Where required, the file is padded with `0x00` bytes to the next multiple of `general.alignment`.
 

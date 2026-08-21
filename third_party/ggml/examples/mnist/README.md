@@ -84,7 +84,7 @@ main: test_acc=97.94+-0.14%
 In addition to the evaluation on the test set the GGML evaluation also prints a random image from the test set as well as the model prediction for said image.
 To train a fully connected model on the CPU using GGML run:
 
-```bash
+``` bash
 $ ../../build/bin/mnist-train mnist-fc mnist-fc-f32.gguf data/MNIST/raw/train-images-idx3-ubyte data/MNIST/raw/train-labels-idx1-ubyte
 ```
 
@@ -156,7 +156,7 @@ main: test_acc=98.46+-0.12%
 
 Like with the fully connected network the convolutional network can also be trained using GGML:
 
-```bash
+``` bash
 $ ../../build/bin/mnist-train mnist-cnn mnist-cnn-f32.gguf data/MNIST/raw/train-images-idx3-ubyte data/MNIST/raw/train-labels-idx1-ubyte
 ```
 
@@ -174,7 +174,7 @@ Note that if a backend does not implement some of the necessary operations a CPU
 The evaluation code can be compiled to WebAssembly using [Emscripten](https://emscripten.org/) (may need to re-login to update `$PATH` after installation).
 First, copy the GGUF file of either of the trained models to `examples/mnist` and name it `mnist-f32.gguf`.
 Copy the test set to `examples/mnist` and name it `t10k-images-idx3-ubyte`.
-Symlinking these files will _not_ work!
+Symlinking these files will *not* work!
 Compile the code like so:
 
 ```bash
@@ -190,7 +190,7 @@ The compilation output is copied into `examples/mnist/web`.
 To run it, you need an HTTP server.
 For example:
 
-```bash
+``` bash
 $ python3 examples/mnist/server.py
 
 Serving directory '/home/danbev/work/ai/ggml/examples/mnist/web' at http://localhost:8000

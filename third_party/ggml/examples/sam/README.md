@@ -8,19 +8,18 @@ The example currently supports only the [ViT-B SAM model checkpoint](https://hug
 
 ## Next steps
 
-- [x] Reduce memory usage by utilizing the new ggml-alloc
-- [x] Remove redundant graph nodes
+- [X] Reduce memory usage by utilizing the new ggml-alloc
+- [X] Remove redundant graph nodes
 - [ ] Make inference faster
-- [x] Fix the difference in output masks compared to the PyTorch implementation
-- [x] Filter masks based on stability score
+- [X] Fix the difference in output masks compared to the PyTorch implementation
+- [X] Filter masks based on stability score
 - [ ] Add support for user input
 - [ ] Support F16 for heavy F32 ops
 - [ ] Test quantization
-- [x] Support bigger model checkpoints
+- [X] Support bigger model checkpoints
 - [ ] GPU support
 
 ## Quick start
-
 Setup Python and build examples according to main README.
 
 ```bash
@@ -39,7 +38,6 @@ python examples/sam/convert-pth-to-ggml.py examples/sam/sam_vit_b_01ec64.pth exa
 You can download a [model checkpoint](https://github.com/facebookresearch/segment-anything/tree/main#model-checkpoints) and convert it to `ggml` format using the script `convert-pth-to-ggml.py`:
 
 ## Example output on M2 Ultra
-
 ```
  $ ▶ make -j sam && time ./bin/sam -t 8 -i img.jpg
 [ 28%] Built target common

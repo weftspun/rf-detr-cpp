@@ -9,7 +9,7 @@ The [Cerebras-GPT](https://huggingface.co/cerebras) models are also supported.
 The example supports the following GPT-2 models:
 
 | Model | Description  | Disk Size |
-| ----- | ------------ | --------- |
+| ---   | ---          | ---       |
 | 117M  | Small model  | 240 MB    |
 | 345M  | Medium model | 680 MB    |
 | 774M  | Large model  | 1.5 GB    |
@@ -18,13 +18,13 @@ The example supports the following GPT-2 models:
 Sample performance on MacBook M1 Pro:
 
 | Model | Size  | Time / Token |
-| ----- | ----- | ------------ |
-| GPT-2 | 117M  | 5 ms         |
-| GPT-2 | 345M  | 12 ms        |
-| GPT-2 | 774M  | 23 ms        |
-| GPT-2 | 1558M | 42 ms        |
+| ---   | ---   | ---    |
+| GPT-2 |  117M |   5 ms |
+| GPT-2 |  345M |  12 ms |
+| GPT-2 |  774M |  23 ms |
+| GPT-2 | 1558M |  42 ms |
 
-_TODO: add tables for Cerebras-GPT models_
+*TODO: add tables for Cerebras-GPT models*
 
 Sample output:
 
