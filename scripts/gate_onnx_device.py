@@ -51,7 +51,7 @@ DEVICE_OPS = {
     "Conv", "Div", "Equal", "Erf", "Expand", "Flatten", "Gather", "Gemm", "Identity",
     "LayerNormalization", "MatMul", "MaxPool", "Mul", "Pad", "Pow", "Range",
     "ReduceMean", "ReduceSum", "Relu", "Reshape", "Shape", "Sigmoid", "Slice",
-    "Softmax", "Split", "Sqrt", "Squeeze", "Sub", "Tanh", "Tile", "Transpose",
+    "Softmax", "Split", "Sqrt", "Squeeze", "Sub", "Tanh", "Transpose",
     "Unsqueeze", "Where",
 }
 
@@ -62,6 +62,14 @@ KNOWN_BLOCKERS = {
     "ScatterND": "keypoint-schema scatter in the decoder",
     "TopK": "two-stage query selection",
     "GatherElements": "dynamic gather, also what a GridSample decomposition produces",
+    # Moved out of DEVICE_OPS by the Linux gate, which is what that gate is for. The
+    # macOS gate passed the device half with Tile x1 and DFC 5.3.0 rejected it:
+    #   UnsupportedConcatLayerError in op /encoder/encoder/embeddings/Tile:
+    #   Unsupported concat over axis batch
+    # It broadcasts the CLS and position tokens across the batch axis. At batch 1 that
+    # is a no-op, so it should fold rather than compile -- the same class of fix as the
+    # antialias resize above, and not yet applied.
+    "Tile": "DFC 5.3.0: unsupported concat over axis batch; fold it at batch 1",
     "NonZero": "data-dependent output shape",
     "NonMaxSuppression": "data-dependent output shape",
     "Loop": "control flow",

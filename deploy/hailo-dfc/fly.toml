@@ -1,5 +1,5 @@
 app = "weftspun-hailo-dfc"
-primary_region = "sea"
+primary_region = "sjc"
 
 [build]
 
