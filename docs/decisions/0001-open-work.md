@@ -41,7 +41,7 @@ what was open and when it closed.
       `dec_layers` value with no code changes
 - [x] `qkv_bias` (config default `True`) checkpoint-verified: scanned the
       raw GGUF tensor-name strings for `encoder.layer.0.attention.attention.
-  {query,key,value}.bias` in both `rf-detr-nano-backbone.gguf` and
+{query,key,value}.bias` in both `rf-detr-nano-backbone.gguf` and
       `rf-detr-base-backbone.gguf` — present in both. `linear()` already
       loads and applies any `.bias` tensor it finds (`m.has(pre+".bias")`),
       so this was a verification-only task, no code change needed.
@@ -135,7 +135,7 @@ what was open and when it closed.
       boxes 6.2e-3, logits 4.1e-3, masks 8.4e-2 against the 0.15 gate) —
       checkpoint-verified against `rf-detr-seg-m-ft.pth` (MD5 confirmed).
       Caught a real bug while wiring this one up: `SegmentationParams::
-  num_blocks` must equal `dec_layers` (one `DepthwiseConvBlock` per
+num_blocks` must equal `dec_layers` (one `DepthwiseConvBlock` per
       decoder layer, per `segmentation.h`'s own doc comment) — copying
       SegSmall's test file verbatim with `num_blocks=4` left over (SegMedium
       is `dec_layers=5`) produced a real, large mask divergence
@@ -371,7 +371,7 @@ variants for each (see their sections above), then phase-2 training.
       manifest and lazily loads each item on demand (no full-dataset
       caching, so memory stays bounded regardless of split size).
       `train_step_demo.cpp` now cycles through the dataset (`step %
-  dataset.size()`, wrapping like an epoch boundary) instead of
+dataset.size()`, wrapping like an epoch boundary) instead of
       training on one repeated image — validated over 30 steps across all
       24 real images (plus 6 steps of a second wraparound pass): loss
       stays finite and bounded throughout (0.24–2.51 range, no NaN/blowup,
@@ -391,7 +391,7 @@ variants for each (see their sections above), then phase-2 training.
       no longer hand-rolls AdamW math host-side; `build_graph`'s trainable
       path now creates `m`/`v` moment-state tensors per trainable tensor
       and an `adamw_params` (7,) input, and builds `ggml_opt_step_adamw(ctx,
-  w, grad, m, v, adamw_params)` into the SAME single compute call as
+w, grad, m, v, adamw_params)` into the SAME single compute call as
       forward+backward (confirmed via `ggml.c`'s constructor: the result is
       a `ggml_view_tensor(ctx, a)`, i.e. it writes the update directly into
       the weight's own buffer; the CPU kernel also updates `m`/`v` in
