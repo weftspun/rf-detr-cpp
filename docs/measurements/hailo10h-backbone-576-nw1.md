@@ -1,5 +1,14 @@
 # Compiled layer census: backbone, 576, `num_windows=1`, Hailo-10H
 
+**The decision this supports is not here.** RFD 107e decides how the chain deploys to an
+edge accelerator, and `weftspun/logbook`'s `logbook-edge-npu-and-the-anny-forward.md`
+carries the measurements and the two retractions behind it. RFD 1000 asks a document to
+point at its source rather than copy it, and `docs/decisions/0005-hailo-edge-compile.md`
+copied both. It was removed rather than maintained in three places.
+
+What stays here is what belongs beside the code: the census of the graph this repository's
+own scripts produce, and the compiled graph itself.
+
 Clipped from the HAR that DFC 5.3.0 produced. `hailo10h-backbone-576-nw1.hn.zst`
 beside this file is the compiled graph itself, 6 KB.
 
