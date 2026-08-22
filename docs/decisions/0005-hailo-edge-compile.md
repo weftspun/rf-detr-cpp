@@ -47,10 +47,10 @@ The concat that joins the CLS token to the patch tokens fails next. Setting
 `num_windows=1` removes both constructs at the source: `Tile` count 0, and the
 embeddings concat is absent from the graph entirely.
 
-| graph | DFC 5.3.0, hailo10h |
-| ----- | ------------------- |
-| `num_windows=2`, 868 nodes | REJECTED |
-| `num_windows=1`, 825 nodes | **PARSE OK** |
+| graph                      | DFC 5.3.0, hailo10h |
+| -------------------------- | ------------------- |
+| `num_windows=2`, 868 nodes | REJECTED            |
+| `num_windows=1`, 825 nodes | **PARSE OK**        |
 
 Same model, same resolution, same fold applied to both.
 

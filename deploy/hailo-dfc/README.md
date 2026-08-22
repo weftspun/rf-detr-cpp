@@ -36,11 +36,11 @@ the HAR and the parse output, which are the measurement rather than a by-product
 
 The two gates are run as a pair and their disagreement is the finding, not an error:
 
-| macOS | DFC | meaning |
-| --- | --- | --- |
-| PASS | parses | the allowlist held |
-| PASS | rejects X | `DEVICE_OPS` is too generous; move X to `KNOWN_BLOCKERS` |
-| FAIL on X | parses | `DEVICE_OPS` is too strict; move X in |
+| macOS     | DFC       | meaning                                                  |
+| --------- | --------- | -------------------------------------------------------- |
+| PASS      | parses    | the allowlist held                                       |
+| PASS      | rejects X | `DEVICE_OPS` is too generous; move X to `KNOWN_BLOCKERS` |
+| FAIL on X | parses    | `DEVICE_OPS` is too strict; move X in                    |
 
 `gate_dfc_parse.py` exits non-zero on any of the bottom two rows, including when the
 parse itself succeeded.

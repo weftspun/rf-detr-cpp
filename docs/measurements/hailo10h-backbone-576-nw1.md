@@ -16,22 +16,22 @@ committed graph with `zstd -dc hailo10h-backbone-576-nw1.hn.zst | python -m json
     HN out    336 layers
     arch      hailo10h, DFC 5.3.0
 
-| count | Hailo layer type      |
-| ----- | --------------------- |
-| 130   | normalization         |
-| 65    | conv                  |
-| 46    | layer_normalization   |
-| 25    | ew_add                |
-| 24    | matmul                |
-| 14    | feature_splitter      |
-| 12    | softmax               |
-| 5     | format_conversion     |
-| 4     | concat                |
-| 4     | slice                 |
-| 2     | const_input           |
-| 2     | shortcut              |
-| 2     | output_layer          |
-| 1     | input_layer           |
+| count | Hailo layer type    |
+| ----- | ------------------- |
+| 130   | normalization       |
+| 65    | conv                |
+| 46    | layer_normalization |
+| 25    | ew_add              |
+| 24    | matmul              |
+| 14    | feature_splitter    |
+| 12    | softmax             |
+| 5     | format_conversion   |
+| 4     | concat              |
+| 4     | slice               |
+| 2     | const_input         |
+| 2     | shortcut            |
+| 2     | output_layer        |
+| 1     | input_layer         |
 
 Two things worth reading off this rather than inferring.
 
