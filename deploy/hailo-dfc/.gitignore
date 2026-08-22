@@ -1,0 +1,8 @@
+# The DFC wheel is 522 MB and gated behind a developer account. Fetch it by hand.
+*.whl
+# Everything below is assembled by build.sh from the repository. Committing any of it
+# would put a second copy of a gate beside the first, which is the drift build.sh
+# exists to prevent.
+models/
+scripts/
+*.har

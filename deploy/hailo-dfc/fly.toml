@@ -1,0 +1,8 @@
+app = "weftspun-hailo-dfc"
+primary_region = "sjc"
+
+[build]
+
+[[vm]]
+  size = "performance-4x"
+  memory = "16gb"
