@@ -39,6 +39,43 @@ def tent(t):
     operator set; no eps, since sqrt(0) is 0 and correct in a forward pass."""
     return F.relu(1.0 - torch.sqrt(t * t))
 
+def normalised_tents(idx, n_out, eps=1e-6):
+    """The tent scores over every output slot, divided by their own sum.
+
+    THIS IS SOFTMAX'S DENOMINATOR AND NOTHING MORE, which is worth saying plainly because it
+    was arrived at the long way. The tent alone is EXACTLY a one-hot at integer positions, so
+    in real arithmetic the sum below is exactly 1 and this division is the identity. Under
+    int8 it is not: `idx - i` spans the whole slot range, the quantiser gives it a step of
+    about 0.811 against a kernel that is zero beyond |t| = 1, and neighbours that should
+    contribute nothing contribute up to the step. Measured, the mask summed to 1.252.
+
+    An unnormalised similarity score is not a distribution -- that is why attention has a
+    denominator -- and a mask asserted to be one-hot is a distribution. Dividing by the sum
+    makes it one BY CONSTRUCTION, so the failure mode cannot occur at any word length rather
+    than being pushed below a threshold by spending bits on it.
+
+    RETRACTED, AND THE RETRACTION IS THE USEFUL PART. Two fixes were tried first and both are
+    wrong. Clipping the argument into [-1, 1] is exactly the identity in real arithmetic and
+    changed NOTHING measured, because quantisation happens where `idx - i` is CREATED, which
+    is upstream of any clip. Sharpening the kernel to tent^n shrinks a leak of eps to eps^n
+    and looked promising on paper; swept across powers 1, 2, 3, 4 and 6 it fails at every one,
+    and power 6 is worse than power 1, because sharpening shrinks the match faster than the
+    leak. Normalisation passes at every power INCLUDING 1, which is what says the sharpening
+    was never the operative part.
+
+    The clamp is a division guard, not a correction. In contract the sum is exactly 1, so it
+    is identity; out of contract -- an index outside [0, n_out) -- every tent is zero and the
+    clamp returns zeros instead of NaN, which the negative control requires to be wrong rather
+    than to be poison.
+    """
+    ws = [tent(idx - float(i)) for i in range(n_out)]
+    s = ws[0]
+    for w in ws[1:]:
+        s = s + w
+    s = torch.clamp(s, min=eps)
+    return [w / s for w in ws]
+
+
 
 def scatter_onehot(base, idx, updates, n_out):
     """base: (N, n_out). idx: (N, K) integer-valued. updates: (N, K). Returns base with
@@ -55,10 +92,8 @@ def scatter_onehot(base, idx, updates, n_out):
     # dimension at all. One small block per slot, each operating on (N,K) with a scalar
     # subtrahend, and a concat at the end. n_out blocks instead of one rank-3 tensor --
     # more nodes, and every one of them an operator the per-operator run measured passing.
-    cols = []
-    for i in range(n_out):
-        w = tent(idx - float(i))                        # (N, K), scalar subtrahend
-        cols.append((updates * w).sum(dim=1, keepdim=True))
+    cols = [(updates * w).sum(dim=1, keepdim=True)
+            for w in normalised_tents(idx, n_out)]
     return base + torch.cat(cols, dim=1)
 
 
