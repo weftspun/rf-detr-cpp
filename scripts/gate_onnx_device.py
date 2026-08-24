@@ -49,6 +49,14 @@ import torch.nn.functional as F
 #: turns it into one. Every entry below was observed in a device-half export that the
 #: numeric check passed; nothing is here on the strength of a datasheet.
 DEVICE_OPS = {
+    # OneHot is accepted ONLY inside an exact pattern, which is why it sat in
+    # KNOWN_BLOCKERS after a first refusal. `is_supported_one_hot` in the translator's
+    # onnx_graph.py walks a chain of OneHot(axis=-1) -> Transpose(perm=[0,4,2,3,1]) ->
+    # Squeeze(axis 4 or -1) with exactly one predecessor, and anything between those three
+    # nodes breaks the match. A `Cast` emitted by `.to(dtype)` before the Transpose was the
+    # entire difference between REFUSED and PARSED OK on identical arithmetic; the cast
+    # belongs after the Squeeze. See build/onehot/pattern.py for the exported shape.
+    "OneHot",
     "Add", "AveragePool", "Cast", "Clip", "Concat", "Constant", "ConstantOfShape",
     "Conv", "Div", "Equal", "Erf", "Expand", "Flatten", "Gather", "Gemm", "Identity",
     "LayerNormalization", "MatMul", "MaxPool", "Mul", "Pad", "Pow", "Range",
