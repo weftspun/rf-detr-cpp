@@ -1,0 +1,937 @@
+#usda 1.0
+(
+    doc = """ONNX operator names the accelerator toolchain documents as supported.
+
+    Operator names only. These are ONNX identifiers -- facts about an interface -- read out of
+    the vendor's supported-layer and supported-activation tables.
+
+    ESSENTIAL TUPLE NORMAL FORM. `Layers` and `Activations` are satellite relations rather than
+    one relation with a nullable kind column, because an operator is not a layer-with-a-null.
+    Nothing derivable is stored: the union of the two, which is what a caller usually wants, is
+    computed rather than written down, so the two cannot disagree with a third copy.
+
+    PATTERNS ARE A SEPARATE RELATION for the same reason. Some activations are reachable only
+    as a fixed sequence of operators and never as a bare one, so membership in a sequence is a
+    different fact from membership in a list, and it gets its own place rather than a flag.
+
+    `Erf` is why this file carries patterns at all: it appears in neither list alone, and is
+    accepted only inside the gelu sequence. A real 825-node export contains twelve `Erf` nodes
+    and compiles; a standalone `Erf` is rejected at parse.
+    """
+    subLayers = []
+)
+
+def Scope "HailoOps"
+{
+    custom string source = "Dataflow Compiler 5.3.0, supported-layer and supported-activation tables"
+    custom int opset = 17
+
+    def Scope "Layers"
+    {
+        custom token[] ops = [
+            "Add", "ArgMax", "AveragePool", "BatchNormalization", "Concat", "Conv",
+            "ConvTranspose", "DepthToSpace", "Div", "Dropout", "GRU", "Gemm", "LSTM",
+            "LayerNormalization", "LogSoftmax", "MatMul", "Max", "MaxPool", "Min", "Mul",
+            "Neg", "OneHot", "Pad", "Pow", "RNN", "ReduceL2", "ReduceMax", "ReduceMean",
+            "ReduceMin", "ReduceSum", "ReduceSumSquare", "Reshape", "Resize", "Slice",
+            "Softmax", "SpaceToDepth", "Split", "Sub", "Transpose", "Upsample"
+        ]
+    }
+
+    def Scope "Activations"
+    {
+        custom token[] ops = [
+            "Abs", "Clip", "Elu", "Equal", "Exp", "Greater", "HardSigmoid", "LeakyRelu",
+            "Less", "Log", "Min", "PRelu", "Relu", "Sigmoid", "Softplus", "Softsign",
+            "Sqrt", "Tanh"
+        ]
+    }
+
+    def Scope "Patterns"
+    {
+        def Scope "Gelu"
+        {
+            custom token[] sequence = ["Mul", "Erf"]
+        }
+        def Scope "HardSwish"
+        {
+            custom token[] sequence = ["Mul", "HardSigmoid"]
+        }
+        def Scope "Silu"
+        {
+            custom token[] sequence = ["Mul", "Sigmoid"]
+        }
+        def Scope "Mish"
+        {
+            custom token[] sequence = ["Mul", "Tanh", "Softplus"]
+        }
+    }
+
+    def Scope "OnnxSpec"
+    {
+        custom string producer = "onnx 1.22.0, ai.onnx domain, schemas with history"
+        custom int opset = 17
+
+        custom token[] ops = [
+            "Abs", "Acos", "Acosh", "Add", "And", "ArgMax", "ArgMin", "Asin", "Asinh", "Atan",
+            "Atanh", "AveragePool", "BatchNormalization", "Bernoulli", "BitShift",
+            "BlackmanWindow", "Cast", "CastLike", "Ceil", "Celu", "Clip", "Compress", "Concat",
+            "ConcatFromSequence", "Constant", "ConstantOfShape", "Conv", "ConvInteger",
+            "ConvTranspose", "Cos", "Cosh", "CumSum", "DFT", "DepthToSpace", "DequantizeLinear",
+            "Det", "Div", "Dropout", "DynamicQuantizeLinear", "Einsum", "Elu", "Equal", "Erf",
+            "Exp", "Expand", "EyeLike", "Flatten", "Floor", "GRU", "Gather", "GatherElements",
+            "GatherND", "Gemm", "GlobalAveragePool", "GlobalLpPool", "GlobalMaxPool", "Greater",
+            "GreaterOrEqual", "GridSample", "HammingWindow", "HannWindow", "HardSigmoid",
+            "HardSwish", "Hardmax", "Identity", "If", "InstanceNormalization", "IsInf", "IsNaN",
+            "LRN", "LSTM", "LayerNormalization", "LeakyRelu", "Less", "LessOrEqual", "Log",
+            "LogSoftmax", "Loop", "LpNormalization", "LpPool", "MatMul", "MatMulInteger", "Max",
+            "MaxPool", "MaxRoiPool", "MaxUnpool", "Mean", "MeanVarianceNormalization",
+            "MelWeightMatrix", "Min", "Mod", "Mul", "Multinomial", "Neg",
+            "NegativeLogLikelihoodLoss", "NonMaxSuppression", "NonZero", "Not", "OneHot",
+            "Optional", "OptionalGetElement", "OptionalHasElement", "Or", "PRelu", "Pad", "Pow",
+            "QLinearConv", "QLinearMatMul", "QuantizeLinear", "RNN", "RandomNormal",
+            "RandomNormalLike", "RandomUniform", "RandomUniformLike", "Range", "Reciprocal",
+            "ReduceL1", "ReduceL2", "ReduceLogSum", "ReduceLogSumExp", "ReduceMax", "ReduceMean",
+            "ReduceMin", "ReduceProd", "ReduceSum", "ReduceSumSquare", "Relu", "Reshape",
+            "Resize", "ReverseSequence", "RoiAlign", "Round", "STFT", "Scan", "Scatter",
+            "ScatterElements", "ScatterND", "Selu", "SequenceAt", "SequenceConstruct",
+            "SequenceEmpty", "SequenceErase", "SequenceInsert", "SequenceLength", "SequenceMap",
+            "Shape", "Shrink", "Sigmoid", "Sign", "Sin", "Sinh", "Size", "Slice", "Softmax",
+            "SoftmaxCrossEntropyLoss", "Softplus", "Softsign", "SpaceToDepth", "Split",
+            "SplitToSequence", "Sqrt", "Squeeze", "StringNormalizer", "Sub", "Sum", "Tan", "Tanh",
+            "TfIdfVectorizer", "ThresholdedRelu", "Tile", "TopK", "Transpose", "Trilu", "Unique",
+            "Unsqueeze", "Upsample", "Where", "Xor"
+        ]
+    }
+
+    def Scope "Secondary"
+    {
+        custom string note = "Every opset-17 operator the target does not implement, with either a rewrite into ones it does or a reason there is none. Both are entries: an operator with no row would be indistinguishable from one nobody has examined."
+
+        def Scope "Activation"
+        {
+            def Scope "Celu"
+            {
+                custom string identity = "celu(x) == max(0, x) + min(0, a * (exp(x / a) - 1))"
+                custom token[] sequence = ["Relu", "Div", "Exp", "Sub", "Mul", "Min", "Add"]
+                custom token proof = "analysis"
+            }
+
+            def Scope "HardSwish"
+            {
+                custom string identity = "hardswish(x) == x * hardsigmoid(x); the target names this pattern"
+                custom token[] sequence = ["Mul", "HardSigmoid"]
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "Hardmax"
+            {
+                custom string identity = "hardmax(x) == onehot(argmax(x)); the target implements OneHot natively, which is what makes this cheap rather than a tent reconstruction"
+                custom token[] sequence = ["ArgMax", "OneHot"]
+            }
+
+            def Scope "Selu"
+            {
+                custom string identity = "selu(x) == g * (max(0, x) + min(0, a * (exp(x) - 1)))"
+                custom token[] sequence = ["Relu", "Exp", "Sub", "Mul", "Min", "Add"]
+                custom token proof = "analysis"
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "Shrink"
+            {
+                custom string identity = "shrink(x) == (x < -l)(x + b) + (x > l)(x - b)"
+                custom token[] sequence = ["Less", "Greater", "Add", "Sub", "Mul"]
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "Softsign"
+            {
+                custom string identity = "x / (1 + |x|)"
+                custom token[] sequence = ["Abs", "Add", "Div"]
+                custom token proof = "analysis"
+            }
+
+            def Scope "ThresholdedRelu"
+            {
+                custom string identity = "thresholded relu(x) == x * (x > theta)"
+                custom token[] sequence = ["Greater", "Mul"]
+                custom token proof = "analysis"
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+        }
+
+        def Scope "Boolean"
+        {
+            def Scope "And"
+            {
+                custom string identity = "a and b == a * b, on {0, 1}"
+                custom token[] sequence = ["Mul"]
+                custom token proof = "ring"
+            }
+
+            def Scope "Not"
+            {
+                custom string identity = "not a == 1 - a, on {0, 1}"
+                custom token[] sequence = ["Sub"]
+                custom token proof = "ring"
+            }
+
+            def Scope "Or"
+            {
+                custom string identity = "a or b == a + b - a * b, on {0, 1}"
+                custom token[] sequence = ["Add", "Sub", "Mul"]
+                custom token proof = "ring"
+            }
+
+            def Scope "Xor"
+            {
+                custom string identity = "a xor b == a + b - 2 * a * b, on {0, 1}"
+                custom token[] sequence = ["Add", "Sub", "Mul"]
+                custom token proof = "ring"
+            }
+
+        }
+
+        def Scope "HyperbolicExact"
+        {
+            def Scope "Acosh"
+            {
+                custom string identity = "acosh(x) == log(x + sqrt(x^2 - 1)), exact for x >= 1"
+                custom token[] sequence = ["Mul", "Sub", "Sqrt", "Log"]
+                custom token proof = "analysis"
+            }
+
+            def Scope "Asinh"
+            {
+                custom string identity = "asinh(x) == log(x + sqrt(x^2 + 1)), exact"
+                custom token[] sequence = ["Mul", "Add", "Sqrt", "Log"]
+                custom token proof = "analysis"
+            }
+
+            def Scope "Atanh"
+            {
+                custom string identity = "atanh(x) == 0.5 * log((1 + x) / (1 - x)), exact for |x| < 1"
+                custom token[] sequence = ["Add", "Sub", "Div", "Log", "Mul"]
+                custom token proof = "analysis"
+            }
+
+            def Scope "Cosh"
+            {
+                custom string identity = "cosh(x) == (exp(x) + exp(-x)) / 2, exact"
+                custom token[] sequence = ["Exp", "Neg", "Add", "Div"]
+                custom token proof = "analysis"
+            }
+
+            def Scope "Sinh"
+            {
+                custom string identity = "sinh(x) == (exp(x) - exp(-x)) / 2, exact"
+                custom token[] sequence = ["Exp", "Neg", "Sub", "Div"]
+                custom token proof = "analysis"
+            }
+
+        }
+
+        def Scope "Indexing"
+        {
+            def Scope "Gather"
+            {
+                custom string identity = "gather(data, idx) == onehot(idx) @ data. The accelerator implements OneHot as a convolution with a delta activation, so the index is never quantised -- which is the whole reason to prefer it to a tent kernel"
+                custom token[] sequence = ["OneHot", "MatMul"]
+            }
+
+            def Scope "GatherElements"
+            {
+                custom string identity = "as Gather, along the gathered axis"
+                custom token[] sequence = ["OneHot", "MatMul"]
+            }
+
+            def Scope "GatherND"
+            {
+                custom string identity = "flatten the indexed axes, then Gather"
+                custom token[] sequence = ["Reshape", "OneHot", "MatMul"]
+            }
+
+            def Scope "GridSample"
+            {
+                custom string identity = "bilinear sample == gather the four corners and weight them, the gather by OneHot"
+                custom token[] sequence = ["OneHot", "MatMul", "Mul", "Add"]
+            }
+
+            def Scope "MaxUnpool"
+            {
+                custom string identity = "scatter the values back to the argmax positions"
+                custom token[] sequence = ["OneHot", "MatMul"]
+            }
+
+            def Scope "Scatter"
+            {
+                custom string identity = "scatter(base, idx, upd) == base + onehot(idx)^T @ upd"
+                custom token[] sequence = ["OneHot", "Transpose", "MatMul", "Add"]
+            }
+
+            def Scope "ScatterElements"
+            {
+                custom string identity = "as Scatter, along the scattered axis"
+                custom token[] sequence = ["OneHot", "Transpose", "MatMul", "Add"]
+            }
+
+            def Scope "ScatterND"
+            {
+                custom string identity = "flatten the indexed axes, then Scatter"
+                custom token[] sequence = ["Reshape", "OneHot", "Transpose", "MatMul", "Add"]
+            }
+
+            def Scope "TfIdfVectorizer"
+            {
+                custom string identity = "n-gram counting over TOKEN IDS, not text: the schema accepts tensor(int32) and tensor(int64) as well as tensor(string), so with ids in it is onehot-and-accumulate. It was refused as 'operates on strings' until the schema was actually read"
+                custom token[] sequence = ["OneHot", "MatMul", "ReduceSum"]
+            }
+
+            def Scope "TopK"
+            {
+                custom string identity = "a bitonic sorting network of Min and Max, then Slice. The depth is O(log^2 n) and fixed, so it is a static graph; topk_bitonic.py is the working"
+                custom token[] sequence = ["Min", "Max", "Concat", "Slice"]
+            }
+
+        }
+
+        def Scope "LinearTransform"
+        {
+            def Scope "BlackmanWindow"
+            {
+                custom string identity = "a constant vector"
+                custom token[] sequence = []
+                custom token spec_body = "cast-only"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "DFT"
+            {
+                custom string identity = "at a fixed length the DFT is linear: multiply by a constant twiddle matrix"
+                custom token[] sequence = ["MatMul", "Concat"]
+            }
+
+            def Scope "Einsum"
+            {
+                custom string identity = "transpose and reshape the operands into a matrix product"
+                custom token[] sequence = ["Transpose", "Reshape", "MatMul"]
+            }
+
+            def Scope "HammingWindow"
+            {
+                custom string identity = "a constant vector"
+                custom token[] sequence = []
+                custom token spec_body = "cast-only"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "HannWindow"
+            {
+                custom string identity = "a constant vector"
+                custom token[] sequence = []
+                custom token spec_body = "cast-only"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "MaxRoiPool"
+            {
+                custom string identity = "crop by Slice, then max pool, for a fixed set of regions"
+                custom token[] sequence = ["Slice", "MaxPool", "Concat"]
+            }
+
+            def Scope "MelWeightMatrix"
+            {
+                custom string identity = "a constant matrix"
+                custom token[] sequence = []
+            }
+
+            def Scope "RoiAlign"
+            {
+                custom string identity = "bilinear sample at fixed offsets == Slice and weighted Add"
+                custom token[] sequence = ["Slice", "Mul", "Add", "Concat"]
+            }
+
+            def Scope "STFT"
+            {
+                custom string identity = "window, then a DFT per frame; both constant at a fixed length"
+                custom token[] sequence = ["Mul", "MatMul", "Concat"]
+            }
+
+        }
+
+        def Scope "Loss"
+        {
+            def Scope "NegativeLogLikelihoodLoss"
+            {
+                custom string identity = "-sum(onehot(target) * logsoftmax(x))"
+                custom token[] sequence = ["OneHot", "LogSoftmax", "Mul", "ReduceSum", "Neg"]
+            }
+
+            def Scope "SoftmaxCrossEntropyLoss"
+            {
+                custom string identity = "as NLL over log softmax"
+                custom token[] sequence = ["OneHot", "LogSoftmax", "Mul", "ReduceSum", "Neg"]
+            }
+
+        }
+
+        def Scope "PoolingNormalisation"
+        {
+            def Scope "GlobalAveragePool"
+            {
+                custom string identity = "global average pool == reduce mean over the spatial axes"
+                custom token[] sequence = ["ReduceMean"]
+            }
+
+            def Scope "GlobalLpPool"
+            {
+                custom string identity = "Lp pool == (sum(|x|^p))^(1/p)"
+                custom token[] sequence = ["Abs", "Pow", "ReduceSum"]
+            }
+
+            def Scope "GlobalMaxPool"
+            {
+                custom string identity = "global max pool == reduce max over the spatial axes"
+                custom token[] sequence = ["ReduceMax"]
+            }
+
+            def Scope "InstanceNormalization"
+            {
+                custom string identity = "per-instance (x - mean) / sqrt(var + eps), then scale and shift"
+                custom token[] sequence = ["ReduceMean", "Sub", "Mul", "Sqrt", "Div", "Add"]
+            }
+
+            def Scope "LRN"
+            {
+                custom string identity = "local response norm == x / (k + a/n * boxsum(x^2))^b, the window sum being an average pool over squares"
+                custom token[] sequence = ["Mul", "AveragePool", "Pow", "Div", "Add"]
+            }
+
+            def Scope "LpNormalization"
+            {
+                custom string identity = "x / ||x||_2 along an axis"
+                custom token[] sequence = ["ReduceL2", "Div"]
+            }
+
+            def Scope "LpPool"
+            {
+                custom string identity = "windowed Lp pool == (avgpool(|x|^p) * window)^(1/p)"
+                custom token[] sequence = ["Abs", "Pow", "AveragePool"]
+            }
+
+            def Scope "MeanVarianceNormalization"
+            {
+                custom string identity = "(x - mean) / sqrt(var + eps), which is layer norm without the learned scale and shift"
+                custom token[] sequence = ["LayerNormalization"]
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+        }
+
+        def Scope "Reduction"
+        {
+            def Scope "ArgMin"
+            {
+                custom string identity = "argmin(x) == argmax(-x)"
+                custom token[] sequence = ["Neg", "ArgMax"]
+            }
+
+            def Scope "CumSum"
+            {
+                custom string identity = "cumsum(x) == L @ x, with L a constant lower-triangular matrix of ones. The shape is fixed, so L is a constant rather than a computation"
+                custom token[] sequence = ["MatMul"]
+            }
+
+            def Scope "Mean"
+            {
+                custom string identity = "mean(x_1..x_n) == (x_1 + ... + x_n) / n"
+                custom token[] sequence = ["Add", "Div"]
+                custom token proof = "ring"
+            }
+
+            def Scope "ReduceL1"
+            {
+                custom string identity = "L1(x) == sum(|x|)"
+                custom token[] sequence = ["Abs", "ReduceSum"]
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "ReduceLogSum"
+            {
+                custom string identity = "logsum(x) == log(sum(x))"
+                custom token[] sequence = ["ReduceSum", "Log"]
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "ReduceLogSumExp"
+            {
+                custom string identity = "logsumexp(x) == log(sum(exp(x)))"
+                custom token[] sequence = ["Exp", "ReduceSum", "Log"]
+                custom token spec_body = "cast-only"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "ReduceProd"
+            {
+                custom string identity = "prod(x) == exp(sum(log(x))), FOR STRICTLY POSITIVE x only; a zero or a negative makes the log undefined and this rewrite wrong"
+                custom token[] sequence = ["Log", "ReduceSum", "Exp"]
+                custom token proof = "analysis"
+            }
+
+            def Scope "Sum"
+            {
+                custom string identity = "sum(a, b, ...) == a + b + ..., left-folded"
+                custom token[] sequence = ["Add"]
+                custom token proof = "ring"
+            }
+
+        }
+
+        def Scope "Selection"
+        {
+            def Scope "GreaterOrEqual"
+            {
+                custom string identity = "x >= y == 1 - (x < y)"
+                custom token[] sequence = ["Less", "Sub"]
+                custom token proof = "ring"
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "IsInf"
+            {
+                custom string identity = "isinf(x) == |x| > finite_max, with the bound a constant"
+                custom token[] sequence = ["Abs", "Greater"]
+            }
+
+            def Scope "IsNaN"
+            {
+                custom string identity = "isnan(x) == 1 - (x == x); NaN is the only value not equal to itself"
+                custom token[] sequence = ["Equal", "Sub"]
+            }
+
+            def Scope "LessOrEqual"
+            {
+                custom string identity = "x <= y == 1 - (x > y)"
+                custom token[] sequence = ["Greater", "Sub"]
+                custom token proof = "ring"
+                custom token spec_body = "usable"
+                custom string source = "ONNX spec FunctionProto, Apache-2.0 -- authoritative, and it disagrees with the hand-written identity in at least one place: the spec builds GreaterOrEqual from Equal, Greater and Or where this table had 1 - Less. Both compute it; only one is the specification."
+            }
+
+            def Scope "Sign"
+            {
+                custom string identity = "sign(x) == (x > 0) - (x < 0), which is exact at zero unlike x / |x|"
+                custom token[] sequence = ["Greater", "Less", "Sub"]
+                custom token proof = "analysis"
+            }
+
+            def Scope "Where"
+            {
+                custom string identity = "where(c, a, b) == b + (a - b) * c, for c in {0, 1}"
+                custom token[] sequence = ["Sub", "Mul", "Add"]
+                custom token proof = "ring"
+            }
+
+        }
+
+        def Scope "ShapeFolded"
+        {
+            def Scope "CastLike"
+            {
+                custom string identity = "a relabelling cast is removed. A VALUE-CHANGING one is refused"
+                custom token[] sequence = []
+            }
+
+            def Scope "ConcatFromSequence"
+            {
+                custom string identity = "sequences do not exist at a fixed shape; the members are known and concatenate directly"
+                custom token[] sequence = ["Concat"]
+            }
+
+            def Scope "Constant"
+            {
+                custom string identity = "folded into the consumer at build time; the shape is fixed"
+                custom token[] sequence = []
+            }
+
+            def Scope "ConstantOfShape"
+            {
+                custom string identity = "folded; the shape is known before the graph runs"
+                custom token[] sequence = []
+            }
+
+            def Scope "Expand"
+            {
+                custom string identity = "broadcast to a known shape == multiply by a constant one-tensor"
+                custom token[] sequence = ["Mul"]
+                custom token proof = "ring"
+            }
+
+            def Scope "EyeLike"
+            {
+                custom string identity = "folded to a constant identity matrix"
+                custom token[] sequence = []
+            }
+
+            def Scope "Flatten"
+            {
+                custom string identity = "a Reshape to a known shape"
+                custom token[] sequence = ["Reshape"]
+            }
+
+            def Scope "Identity"
+            {
+                custom string identity = "removed; it computes nothing and the consumer reads the producer directly"
+                custom token[] sequence = []
+            }
+
+            def Scope "Range"
+            {
+                custom string identity = "folded to a constant; the bounds are known at export"
+                custom token[] sequence = []
+            }
+
+            def Scope "ReverseSequence"
+            {
+                custom string identity = "reverse along an axis == Slice with a negative step, or a constant permutation applied by MatMul"
+                custom token[] sequence = ["Slice", "MatMul"]
+            }
+
+            def Scope "Shape"
+            {
+                custom string identity = "folded to a constant; the shape is fixed at export"
+                custom token[] sequence = []
+            }
+
+            def Scope "Size"
+            {
+                custom string identity = "folded to a constant"
+                custom token[] sequence = []
+            }
+
+            def Scope "SplitToSequence"
+            {
+                custom string identity = "as Split; the sequence is unrolled at export"
+                custom token[] sequence = ["Split"]
+            }
+
+            def Scope "Squeeze"
+            {
+                custom string identity = "a Reshape to a known shape"
+                custom token[] sequence = ["Reshape"]
+            }
+
+            def Scope "Tile"
+            {
+                custom string identity = "repeat along an axis == concatenate the input with itself"
+                custom token[] sequence = ["Concat"]
+            }
+
+            def Scope "Trilu"
+            {
+                custom string identity = "multiply by a constant triangular mask"
+                custom token[] sequence = ["Mul"]
+                custom token proof = "ring"
+            }
+
+            def Scope "Unsqueeze"
+            {
+                custom string identity = "a Reshape to a known shape"
+                custom token[] sequence = ["Reshape"]
+            }
+
+        }
+
+        def Scope "TrigonometricApproximate"
+        {
+            custom string warning = "APPROXIMATE, and RANGE LIMITED. These are polynomials, not identities, so they are absent from RfdetrProofs/Secondary.lean on purpose -- a theorem claiming equality would be false. Worse, they hold only on [-pi/2, pi/2]. Reviewed against tinygrad codegen/decomp/transcendental.py (MIT), itself derived from SLEEF: the POLYNOMIAL is plain multiply-add and emits fine, but the Payne-Hanek and Cody-Waite range reductions that make it valid everywhere rest on bitcast, shifts, frexp, ldexp and round-to-int -- 31 casts and 6 bitcasts in that file -- and every one of those is in Refused. So a correct sine over the reals is not reachable on this target, and an argument outside the interval returns a wrong number rather than an error."
+            def Scope "Acos"
+            {
+                custom string identity = "acos(x) == pi/2 - asin(x)"
+                custom token[] sequence = ["Sub", "Mul", "Add", "Sqrt"]
+                custom token proof = "approximate"
+            }
+
+            def Scope "Asin"
+            {
+                custom string identity = "asin(x) == x * P(x^2) on the principal branch"
+                custom token[] sequence = ["Mul", "Add", "Sqrt"]
+                custom token proof = "approximate"
+            }
+
+            def Scope "Atan"
+            {
+                custom string identity = "atan(x) == x * P(x^2) after quadrant folding"
+                custom token[] sequence = ["Mul", "Add", "Div"]
+                custom token proof = "approximate"
+            }
+
+            def Scope "Cos"
+            {
+                custom string identity = "cos(x) == sin(x + pi/2), same polynomial. VALID ONLY ON [-pi/2, pi/2]"
+                custom token[] sequence = ["Mul", "Add"]
+                custom token proof = "approximate"
+            }
+
+            def Scope "Sin"
+            {
+                custom string identity = "sin(x) == x * P(x^2), a degree-9 odd polynomial. VALID ONLY ON [-pi/2, pi/2] here -- see the category warning"
+                custom token[] sequence = ["Mul", "Add"]
+                custom token proof = "approximate"
+            }
+
+            def Scope "Tan"
+            {
+                custom string identity = "tan(x) == sin(x) / cos(x); range limited AND unbounded near pi/2"
+                custom token[] sequence = ["Mul", "Add", "Div"]
+                custom token proof = "approximate"
+            }
+
+        }
+
+    }
+
+    def Scope "Refused"
+    {
+        custom string note = "No rewrite, and the category says how permanent that is. A data-dependent shape can never be a static graph; a rounding refusal is a measurement that could be revisited on a wider datapath."
+
+        def Scope "Bernoulli"
+        {
+            custom token category = "nondeterministic"
+            custom string reason = "sampling; no deterministic rewrite"
+        }
+
+        def Scope "BitShift"
+        {
+            custom token category = "rounding"
+            custom string reason = "integer bit manipulation on a float datapath"
+        }
+
+        def Scope "Cast"
+        {
+            custom token category = "rounding"
+            custom string reason = "a relabelling cast is removed; a value-changing one is refused. The target ACCEPTS one and does not perform it, returning an f32 -> s32 -> f32 round trip untruncated and wrong by 0.875"
+        }
+
+        def Scope "Ceil"
+        {
+            custom token category = "rounding"
+            custom string reason = "as Floor"
+        }
+
+        def Scope "Compress"
+        {
+            custom token category = "data-dependent-shape"
+            custom string reason = "the output length depends on the mask's contents"
+        }
+
+        def Scope "ConvInteger"
+        {
+            custom token category = "toolchain-owns-it"
+            custom string reason = "integer convolution is the compiler's output"
+        }
+
+        def Scope "DequantizeLinear"
+        {
+            custom token category = "toolchain-owns-it"
+            custom string reason = "the compiler performs quantization"
+        }
+
+        def Scope "Det"
+        {
+            custom token category = "no-known-rewrite"
+            custom string reason = "a determinant of arbitrary size is not a fixed dataflow graph"
+        }
+
+        def Scope "DynamicQuantizeLinear"
+        {
+            custom token category = "toolchain-owns-it"
+            custom string reason = "the compiler performs quantization"
+        }
+
+        def Scope "Floor"
+        {
+            custom token category = "rounding"
+            custom string reason = "a sum of clipped steps needs an amplification that int8 destroys; measured in native_onehot.py on the same shape of reconstruction"
+        }
+
+        def Scope "If"
+        {
+            custom token category = "control-flow"
+            custom string reason = "both branches would have to be resident and only one taken"
+        }
+
+        def Scope "Loop"
+        {
+            custom token category = "control-flow"
+            custom string reason = "the trip count is not known at export"
+        }
+
+        def Scope "MatMulInteger"
+        {
+            custom token category = "toolchain-owns-it"
+            custom string reason = "integer matmul is the compiler's output"
+        }
+
+        def Scope "Mod"
+        {
+            custom token category = "rounding"
+            custom string reason = "a - b * floor(a / b), and Floor is refused"
+        }
+
+        def Scope "Multinomial"
+        {
+            custom token category = "nondeterministic"
+            custom string reason = "sampling; no deterministic rewrite"
+        }
+
+        def Scope "NonMaxSuppression"
+        {
+            custom token category = "data-dependent-shape"
+            custom string reason = "the number of surviving boxes depends on the scores"
+        }
+
+        def Scope "NonZero"
+        {
+            custom token category = "data-dependent-shape"
+            custom string reason = "the output length is the number of nonzeros"
+        }
+
+        def Scope "Optional"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "an optional-typed value, not a tensor"
+        }
+
+        def Scope "OptionalGetElement"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "operates on optional types"
+        }
+
+        def Scope "OptionalHasElement"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "operates on optional types"
+        }
+
+        def Scope "QLinearConv"
+        {
+            custom token category = "toolchain-owns-it"
+            custom string reason = "the compiler quantizes a float Conv"
+        }
+
+        def Scope "QLinearMatMul"
+        {
+            custom token category = "toolchain-owns-it"
+            custom string reason = "the compiler quantizes a float MatMul"
+        }
+
+        def Scope "QuantizeLinear"
+        {
+            custom token category = "toolchain-owns-it"
+            custom string reason = "the compiler performs quantization"
+        }
+
+        def Scope "RandomNormal"
+        {
+            custom token category = "nondeterministic"
+            custom string reason = "sampling; no deterministic rewrite"
+        }
+
+        def Scope "RandomNormalLike"
+        {
+            custom token category = "nondeterministic"
+            custom string reason = "sampling; no deterministic rewrite"
+        }
+
+        def Scope "RandomUniform"
+        {
+            custom token category = "nondeterministic"
+            custom string reason = "sampling; no deterministic rewrite"
+        }
+
+        def Scope "RandomUniformLike"
+        {
+            custom token category = "nondeterministic"
+            custom string reason = "sampling; no deterministic rewrite"
+        }
+
+        def Scope "Round"
+        {
+            custom token category = "rounding"
+            custom string reason = "as Floor"
+        }
+
+        def Scope "Scan"
+        {
+            custom token category = "control-flow"
+            custom string reason = "a loop carrying state between iterations"
+        }
+
+        def Scope "SequenceAt"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "operates on sequence types"
+        }
+
+        def Scope "SequenceConstruct"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "operates on sequence types"
+        }
+
+        def Scope "SequenceEmpty"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "operates on sequence types"
+        }
+
+        def Scope "SequenceErase"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "operates on sequence types"
+        }
+
+        def Scope "SequenceInsert"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "operates on sequence types"
+        }
+
+        def Scope "SequenceLength"
+        {
+            custom token category = "not-a-tensor"
+            custom string reason = "operates on sequence types"
+        }
+
+        def Scope "SequenceMap"
+        {
+            custom token category = "control-flow"
+            custom string reason = "a loop over a sequence"
+        }
+
+        def Scope "StringNormalizer"
+        {
+            custom token category = "not-reproducible"
+            custom string reason = "case folding here is LOCALE-DEPENDENT: the schema's locale attribute is 'environment dependent', so the same graph gives different output on different machines. That is the objection Blender is blocklisted for and it is fatal on its own. Unicode folding is also not length-preserving -- sharp s folds to ss, the Turkish dotted and dotless i disagree -- so no fixed-shape tensor operation expresses it, and folding a string as bytes is ASCII thinking. Tokenize before the graph"
+        }
+
+        def Scope "Unique"
+        {
+            custom token category = "data-dependent-shape"
+            custom string reason = "the output length is the number of distinct values"
+        }
+
+    }
+}

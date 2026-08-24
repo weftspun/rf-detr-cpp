@@ -25,6 +25,10 @@ python = "3.11.*"
 [feature.gate.pypi-dependencies]
 numpy = ">=1.26"
 onnx = "*"
+# `hailo_ops.usda` is openusd because CLAUDE.md says data is, and reading it needs the same
+# pinned validator the logbook's USD hook uses -- a layer that opens is not a layer that is
+# valid, and only one of those is worth depending on.
+usd-core = "==26.8"
 onnxruntime = "*"
 torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cpu" }
 torchvision = { version = "*", index = "https://download.pytorch.org/whl/cpu" }
