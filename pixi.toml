@@ -1,0 +1,53 @@
+# The python tooling's environment, declared, because until now it had none.
+#
+# This repository is C++ first -- CMakeLists.txt, src/, tests/ -- and its python lives in
+# scripts/ and gen_reference/. Neither had a manifest, a lock, or any file naming what they
+# import. `gate_onnx_device.py` needs numpy, onnx, onnxruntime, torch and rfdetr; nothing
+# recorded that, so the gate that answers "will this deploy to the accelerator" could not be
+# run from a described environment on any desk.
+#
+# That is the failure CLAUDE.md blocklists `uv` for, arriving without `uv`: work resting on
+# an environment nobody can rebuild. The Hailo compatibility question is exactly the kind
+# that must be answerable twice, by two people, and get the same answer.
+[workspace]
+name = "rf-detr-cpp"
+version = "0.1.0"
+description = "RF-DETR inference port, and the gates that decide what reaches the accelerator"
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-arm64"]
+
+# CPU TORCH ON PURPOSE. `gate_onnx_device.py`'s own docstring says it "needs no accelerator
+# and no Dataflow Compiler" -- it exports, runs onnxruntime, and checks the operator set. A
+# CUDA build would add gigabytes and change no answer.
+[feature.gate.dependencies]
+python = "3.11.*"
+
+[feature.gate.pypi-dependencies]
+numpy = ">=1.26"
+onnx = "*"
+onnxruntime = "*"
+torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cpu" }
+torchvision = { version = "*", index = "https://download.pytorch.org/whl/cpu" }
+rfdetr = "*"
+# The corpus is zstd parquet with image bytes in-row, so anything that reads a frame from it
+# needs pyarrow. Declared here rather than discovered as a ModuleNotFoundError, which is the
+# failure the `uv` blocklist entry exists to prevent.
+pyarrow = ">=15"
+pillow = ">=10"
+
+[feature.gate.tasks]
+# Does the device half export, run, and stay inside the operator set the compiler takes?
+# Answers on any desk. `gate_dfc_parse.py` runs the real DFC on Linux and must agree; the
+# pair's DISAGREEMENT is the finding, which is why this one is not sufficient alone.
+device-gate = "python scripts/gate_onnx_device.py"
+# The configuration the compiler actually accepts. The checkpoint default is 2 windows,
+# which exports the 868-node graph DFC 5.3.0 rejects; 1 window exports 825 and clears
+# DEVICE_OPS entirely, at a measured 1.35x wall-clock for losing windowing.
+device-gate-nw1 = "python scripts/gate_onnx_device.py --num-windows 1"
+# End to end: licence-clean corpus frames in, annotated frames out. Re-asserts the holdout
+# exclusion before drawing anything a human looks at.
+keypoints-on-corpus = "python scripts/run_keypoints_on_corpus.py"
+test-device-gate = "python scripts/gate_onnx_device.py --self-test"
+
+[environments]
+gate = { features = ["gate"], no-default-feature = true }

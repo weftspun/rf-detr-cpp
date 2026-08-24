@@ -11,3 +11,11 @@ gen_reference/*.bin
 gen_reference/coco_sample_384/
 /*.log
 data/
+
+# Generated ONNX operator corpora and compiler artefacts. Regenerable from
+# scripts/gen_op_tests.py and the *_onehot / deform / topk scripts, and the compiler writes
+# its own .sim.onnx and .har back into whatever directory it reads.
+op_tests*/
+*.sim.onnx
+*.har
+.pixi/

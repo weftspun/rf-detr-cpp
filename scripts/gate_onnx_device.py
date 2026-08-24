@@ -28,8 +28,10 @@ Run:  uv run --with torch --with numpy --with onnx --with onnxruntime --with rfd
 from __future__ import annotations
 
 import argparse
+import os
 import collections
 import sys
+import tempfile
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -97,11 +99,19 @@ def _fold_antialias():
     return orig, state
 
 
-def build_device_half(resolution: int):
-    """The backbone and projector, which is exactly what would be compiled."""
+def build_device_half(resolution: int, num_windows: int | None = None):
+    """The backbone and projector, which is exactly what would be compiled.
+
+    NUM_WINDOWS IS THE WHOLE COMPATIBILITY QUESTION, so it is a parameter rather than a
+    default nobody reads. `RFDETRKeypointPreviewConfig.num_windows` is 2, which exports 868
+    nodes -- the graph DFC 5.3.0 rejects with "Unsupported concat over axis batch" on the
+    Tile that replicates the CLS token once per window. At 1 there is no per-window
+    replication, the Tile does not exist, and the export is the 825-node graph the compiler
+    takes."""
     from rfdetr import RFDETRKeypointPreview
 
-    model = RFDETRKeypointPreview(resolution=resolution)
+    kw = {} if num_windows is None else {"num_windows": num_windows}
+    model = RFDETRKeypointPreview(resolution=resolution, **kw)
     backbone = model.model.model.backbone[0].eval()
 
     class DeviceHalf(torch.nn.Module):
@@ -158,10 +168,10 @@ def export_and_check(module, resolution, path, tol=KEYPOINT_TOL, allow=DEVICE_OP
     return problems, facts
 
 
-def run(resolution, path):
+def run(resolution, path, num_windows=None):
     orig, folds = _fold_antialias()
     try:
-        module = build_device_half(resolution)
+        module = build_device_half(resolution, num_windows)
         problems, facts = export_and_check(module, resolution, path)
     finally:
         F.interpolate = orig
@@ -179,13 +189,20 @@ def run(resolution, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--resolution", type=int, default=576)
-    ap.add_argument("--out", default="/tmp/device_half.onnx")
+    # NOT "/tmp/...". This gate answers a go/no-go about hardware, so it has to run on the
+    # desk the work happens on, and this workspace is on Windows where /tmp does not exist.
+    # The export reached this line and died on FileNotFoundError, which reads like a model
+    # problem in a traceback and is a path problem.
+    ap.add_argument("--out", default=os.path.join(tempfile.gettempdir(), "device_half.onnx"))
+    ap.add_argument("--num-windows", type=int, default=None,
+                    help="1 is the configuration DFC 5.3.0 accepts; the checkpoint default "
+                         "is 2, which exports the rejected graph")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args()
     if a.self_test:
         return self_test()
     print("device-half gate")
-    problems = run(a.resolution, a.out)
+    problems = run(a.resolution, a.out, a.num_windows)
     if problems:
         print(f"\nFAIL ({len(problems)}):")
         for p in problems:
