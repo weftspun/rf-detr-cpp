@@ -5,6 +5,14 @@ Runs on Linux x86-64, because that is the only platform the DFC wheel is built f
 It needs no accelerator: parsing and emulation are software, so this answers the
 go/no-go before any device is bought.
 
+SECONDARY BY CADENCE, AUTHORITATIVE BY VERDICT. `gate_onnx_device.py` is what runs on
+every change, because it runs anywhere; this one runs before anything is committed to
+hardware. The platform restriction is the whole reason: a gate that needs a machine
+somebody must stand up and authenticate to cannot be the one blocking routine work.
+
+Being run less often does not make it less right. When the two disagree it is still
+`DEVICE_OPS` that gets corrected, never this.
+
 WHY IT IS NOT MERELY A COMPILE. `gate_onnx_device.py` decides the same question on
 macOS from a hand-maintained allowlist, `DEVICE_OPS`. That allowlist is a claim about
 this compiler, and only this script can check it. So the two are run as a PAIR and

@@ -3,9 +3,23 @@
 compiler will take?
 
 Runs on macOS, needs no accelerator and no Dataflow Compiler. It answers the question
-the compiler answers, one stage earlier and on the machine the work happens on. The
-Linux gate beside it (`gate_dfc_parse.py`) then runs the real compiler and must agree;
-where the two disagree, this file's allowlist is wrong and gets corrected from that.
+the compiler answers, one stage earlier and on the machine the work happens on.
+
+THIS IS THE PRIMARY GATE, AND THE DFC GATE IS SECONDARY. That is a statement about
+CADENCE and not about truth. This one runs on any desk, on every change, and blocks;
+`gate_dfc_parse.py` needs Linux x86-64 because that is the only platform the DFC wheel
+builds for, so requiring it everywhere makes routine work wait on a machine somebody
+has to stand up and authenticate to.
+
+WHAT DID NOT FLIP: WHICH ONE IS RIGHT. `DEVICE_OPS` below is a hand-maintained
+allowlist, which is a CLAIM about the compiler. The compiler is the compiler. When the
+two disagree the allowlist is still what gets corrected -- a proxy that outranks its
+own measurement is PITFALLS 4 written into a gate, and the cost of being wrong here is
+discovering it after a training run rather than before one.
+
+So: this gate gives a fast, portable, blocking answer, and it is allowed to be wrong in
+the direction of caution. The DFC gate is run before anything is committed to hardware,
+and its verdict wins.
 
 THREE CHECKS, and each fails loudly rather than skipping:
 
