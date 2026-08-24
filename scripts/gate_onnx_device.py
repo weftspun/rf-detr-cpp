@@ -31,6 +31,7 @@ import argparse
 import os
 import collections
 import sys
+import time
 import tempfile
 import warnings
 
@@ -153,8 +154,77 @@ def export_and_check(module, resolution, path, tol=KEYPOINT_TOL, allow=DEVICE_OP
 
     so = ort.SessionOptions()
     so.log_severity_level = 3
-    outs = ort.InferenceSession(path, so, providers=["CPUExecutionProvider"]).run(
-        None, {"image": x.numpy()})
+
+    # EVERY AVAILABLE PROVIDER, NOT JUST THE CPU, AND THE ONE THAT ANSWERED IS REPORTED.
+    #
+    # This line read `providers=["CPUExecutionProvider"]`, and the docstring above still says
+    # the gate "needs no accelerator". Both are true statements that together produced a false
+    # one: `logbook-edge-npu-and-the-anny-forward.md` opens "macOS, no accelerator" and reports
+    # the backbone at 1399.3 ms, which reads as what this machine can do. It is what this line
+    # allowed it to do. A hardcoded backend list turns a capability question into a tautology.
+    #
+    # So each provider onnxruntime actually offers is run, and each is diffed against PyTorch
+    # separately. That matters more than the timing: CoreML is free to use different kernels
+    # and lower precision, so a provider can be fast and WRONG, and the gate's 4.2e-3 bound is
+    # the contract that decides. A provider outside the bound is a deployability finding, not a
+    # threshold to loosen.
+    #
+    # MEASURED, AND THE ANSWER WAS NOT THE ONE EXPECTED. At 576 with num_windows=1, CoreML runs
+    # 1685.1 ms against the CPU's 476.4 -- 0.28x, nearly four times SLOWER -- and lands at
+    # 4.924e-03 against a 4.2e-03 bound. It is slower AND outside tolerance. The likely reason
+    # is in the caveat below: the provider partitions the graph and hands most of it back, so
+    # the transfers cost more than the acceleration returns.
+    #
+    # That does not make the old hardcoded list correct. It made a capability claim nobody had
+    # tested, and it happened to pick the right backend for the wrong reason; the next model or
+    # the next runtime version moves that answer and nothing would have noticed.
+    #
+    # THE CPU RESULT REMAINS THE VERDICT. This gate answers "will the export deploy", and the
+    # accelerator comparison is evidence beside that rather than a replacement for it.
+    available = [p for p in ort.get_available_providers() if p != "AzureExecutionProvider"]
+    facts["providers_available"] = available
+    facts["by_provider"] = {}
+    outs = None
+    for prov in available:
+        try:
+            sess = ort.InferenceSession(path, so, providers=[prov])
+            t0 = time.perf_counter()
+            got = sess.run(None, {"image": x.numpy()})
+            elapsed = (time.perf_counter() - t0) * 1000.0
+        except Exception as exc:
+            # Named and counted. A provider that will not build is a fact about the deployment
+            # surface, and absorbing it silently is how this file got here.
+            facts["by_provider"][prov] = {"error": f"{type(exc).__name__}: {exc}"}
+            continue
+        diff = max((float(np.abs(r.detach().numpy() - o).max())
+                    for r, o in zip(refs, got) if tuple(r.shape) == tuple(o.shape)), default=None)
+        facts["by_provider"][prov] = {
+            # `get_providers()` reports what was REGISTERED. CoreML partitions a graph and
+            # silently runs unsupported nodes on the CPU, so this does not prove the
+            # accelerator took the whole model -- stated because the opposite is easy to assume.
+            "registered": sess.get_providers(),
+            "ms": elapsed,
+            "max_abs_diff": diff,
+        }
+        if prov == "CPUExecutionProvider":
+            outs = got
+    if outs is None:
+        problems.append("CPUExecutionProvider did not run; it is the gate's reference and "
+                        "an accelerator result cannot stand in for it")
+        return problems, facts
+
+    for prov, r in facts["by_provider"].items():
+        if prov == "CPUExecutionProvider" or "error" in r or r["max_abs_diff"] is None:
+            continue
+        if r["max_abs_diff"] > tol:
+            # The wording here asserted the provider was "faster and does not agree", written
+            # before it was run. It is not faster -- CoreML measured 0.28x the CPU at 576 --
+            # so the sentence stated a speed nobody had measured while reporting a difference
+            # that was. Say only what the numbers say.
+            problems.append(
+                f"provider {prov}: max|diff| {r['max_abs_diff']:.3e} exceeds {tol:.1e}, so it "
+                f"does not agree with PyTorch inside the port's own bound. See the timing "
+                f"table above for whether it is even faster")
 
     if len(outs) != len(refs):
         problems.append(f"onnx returned {len(outs)} outputs, pytorch produced {len(refs)}")
@@ -191,6 +261,22 @@ def run(resolution, path, num_windows=None):
           f"max|diff| {facts['max_abs_diff']:.3e}, {folds['n']} resize folded")
     if facts["outside"]:
         print(f"  operators outside DEVICE_OPS: {facts['outside']}")
+
+    # THE PROVIDER TABLE, PRINTED, BECAUSE ITS ABSENCE IS WHAT MADE 1399.3 ms READ AS THE MAC'S
+    # THROUGHPUT. A run that does not say which backend answered cannot be quoted safely.
+    by = facts.get("by_provider") or {}
+    if by:
+        cpu_ms = (by.get("CPUExecutionProvider") or {}).get("ms")
+        print("  provider                       ms      max|diff|   vs CPU")
+        for prov, r in by.items():
+            if "error" in r:
+                print(f"  {prov:28s} FAILED TO BUILD -- {r['error']}")
+                continue
+            rel = f"{cpu_ms / r['ms']:.2f}x" if cpu_ms and r["ms"] else "--"
+            print(f"  {prov:28s} {r['ms']:8.1f}   {r['max_abs_diff']:.3e}   {rel}")
+        print("  `registered` is what onnxruntime accepted, not what ran: CoreML partitions a")
+        print("  graph and puts unsupported nodes back on the CPU, so a fast row is not proof")
+        print("  the accelerator took the whole model.")
     return problems
 
 
