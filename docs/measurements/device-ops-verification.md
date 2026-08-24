@@ -20,9 +20,9 @@ Hailo names it in the Dataflow Compiler 5.3.0 guide, Table 3 (layers) or Table 4
 or inside one of Table 4's multi-operator patterns. `scripts/hailo_supported_ops.py` holds
 those tables; the guide itself is confidential and is not checked in.
 
-| | documented | undocumented |
-| --- | --- | --- |
-| **observed** | 18 — solid | 7 — pass by folding |
+|                | documented     | undocumented                   |
+| -------------- | -------------- | ------------------------------ |
+| **observed**   | 18 — solid     | 7 — pass by folding            |
 | **unobserved** | 10 — plausible | **5 — nothing supports these** |
 
     observed AND documented (18)
@@ -71,7 +71,7 @@ pass an operator it never considered.
     union across all exports    26
     DEVICE_OPS                  40
 
-The default-windows export is the one DFC 5.3.0 rejects, on `Tile` — *"unsupported concat over
-axis batch; fold it at batch 1"* — and it is included here anyway, because an export that the
+The default-windows export is the one DFC 5.3.0 rejects, on `Tile` — _"unsupported concat over
+axis batch; fold it at batch 1"_ — and it is included here anyway, because an export that the
 compiler refuses still shows which operators the exporter emits, which is what this table is
 counting.
