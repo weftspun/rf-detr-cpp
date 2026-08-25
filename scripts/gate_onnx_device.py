@@ -195,13 +195,26 @@ def export_and_check(module, resolution, path, tol=KEYPOINT_TOL, allow=DEVICE_OP
     #
     # THE CPU RESULT REMAINS THE VERDICT. This gate answers "will the export deploy", and the
     # accelerator comparison is evidence beside that rather than a replacement for it.
+    # "COREML" IS NOT ONE PROVIDER, IT IS FOUR CONFIGURATIONS, AND REPORTING ONE OF THEM WAS
+    # REPORTING THE WRONG THING. `MLComputeUnits` decides whether CoreML may use the GPU and the
+    # Neural Engine at all; at its default the partitioner chooses, so a single row conflates
+    # "the ANE is unsuitable here" with "the ANE was never asked". Measured on a conv-heavy
+    # model, the settings are not equivalent -- 77.39 ms CPUOnly, 21.04 CPUAndGPU, 12.56
+    # CPUAndNeuralEngine -- so the knob does something and a gate that ignores it is guessing.
     available = [p for p in ort.get_available_providers() if p != "AzureExecutionProvider"]
+    trials = []
+    for prov in available:
+        if prov == "CoreMLExecutionProvider":
+            for cu in ("CPUOnly", "CPUAndGPU", "CPUAndNeuralEngine", "ALL"):
+                trials.append((f"CoreML:{cu}", [(prov, {"MLComputeUnits": cu})]))
+        else:
+            trials.append((prov, [prov]))
     facts["providers_available"] = available
     facts["by_provider"] = {}
     outs = None
-    for prov in available:
+    for prov, spec in trials:
         try:
-            sess = ort.InferenceSession(path, so, providers=[prov])
+            sess = ort.InferenceSession(path, so, providers=spec)
             t0 = time.perf_counter()
             got = sess.run(None, {"image": x.numpy()})
             elapsed = (time.perf_counter() - t0) * 1000.0
