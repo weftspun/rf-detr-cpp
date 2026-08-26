@@ -55,6 +55,10 @@ test-device-gate = "python scripts/gate_onnx_device.py --self-test"
 # The `uv` row in CLAUDE.md had no automation anywhere; this is it.
 no-uv = "python scripts/check_no_uv.py"
 test-no-uv = "python scripts/check_no_uv.py --self-test"
+# ONNX is blocklisted as a format; the device gate's scratch export is exempt only
+# while it stays out of the tree. This holds that boundary.
+no-committed-onnx = "python scripts/check_no_committed_onnx.py"
+test-no-committed-onnx = "python scripts/check_no_committed_onnx.py --self-test"
 
 # THE REFERENCE FEATURE, FOR `gen_reference/` AND `scripts/convert_*_to_gguf.py`.
 #
