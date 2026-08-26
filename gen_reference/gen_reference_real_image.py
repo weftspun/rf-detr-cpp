@@ -12,7 +12,7 @@ is only True for keypoint datasets, False (i.e. cat2label=None, so
 ConvertCoco appends category_id directly) for plain detection.
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr --with pillow --with albumentations \
+    pixi run -e reference python \
         gen_reference/gen_reference_real_image.py \
         data/000000289343.jpg data/instances_val2017.json 289343 384 \
         gen_reference/real_image_384.bin

@@ -7,7 +7,7 @@ in isolation before it's wired into the full decoder -- see the approved
 plan at the time this was written (docs/decisions/decoder.md).
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_deform_attn.py gen_reference/reference_deform_attn.bin
 """
 import os

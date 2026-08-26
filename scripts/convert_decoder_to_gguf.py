@@ -9,7 +9,7 @@ tensors; bakes the DETR sine-embedding scale (2*pi/dim_t, dim=hidden_dim/2)
 as a constant tensor "decoder.sine_scale" since it isn't learned.
 
 Usage:
-    uv run --with torch --with numpy --with gguf scripts/convert_decoder_to_gguf.py \
+    pixi run -e reference python scripts/convert_decoder_to_gguf.py \
         models/rf-detr-nano.pth models/rf-detr-nano-decoder.gguf
 """
 import sys

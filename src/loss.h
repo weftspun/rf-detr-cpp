@@ -33,7 +33,7 @@ struct MatchResult {
 // Host-side Hungarian matching (scipy.optimize.linear_sum_assignment
 // equivalent -- a standard O(num_targets^2 * num_queries) Kuhn-Munkres
 // with potentials), using RF-DETR's exact matcher cost formula
-// (checkpoint-verified via uv run --with rfdetr reading matcher.py):
+// (checkpoint-verified by reading rfdetr's matcher.py):
 // cost = cost_bbox*L1(pred_box,tgt_box) + cost_class*focal_cost(pred_logit,tgt_label)
 //        + cost_giou*(-GIoU(pred_box,tgt_box))
 // where focal_cost is the sigmoid-focal-style classification cost (alpha=

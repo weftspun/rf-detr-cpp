@@ -345,7 +345,7 @@ int main(int argc, char ** argv) {
     CocoDataset dataset;
     if (!dataset.load(dataset_dir)) {
         fprintf(stderr, "failed to load dataset from %s -- run:\n"
-                        "  uv run --with torch --with numpy --with rfdetr --with pillow --with albumentations \\\n"
+                        "  pixi run -e reference python \\\n"
                         "    gen_reference/gen_coco_dataset.py data/val2017_sample \\\n"
                         "    data/instances_val2017.json 384 gen_reference/coco_sample_384\n",
                 dataset_dir);

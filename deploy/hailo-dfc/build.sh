@@ -18,7 +18,7 @@ cp "$repo/scripts/gate_dfc_parse.py" "$here/scripts/"
 # Export the graphs on this machine first; the Linux side only checks them.
 echo "exporting device-half graphs with the macOS gate..."
 for res in "$@"; do
-  uv run --quiet --with torch --with numpy --with onnx --with onnxruntime --with rfdetr \
+  pixi run --manifest-path "$repo/pixi.toml" -e gate \
     python "$repo/scripts/gate_onnx_device.py" --resolution "$res" \
     --out "$here/models/backbone_$res.onnx"
 done

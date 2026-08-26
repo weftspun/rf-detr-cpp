@@ -9,7 +9,7 @@ num_classes+1=2 -- the config class default (90) doesn't match this
 specific trained checkpoint (single class: person).
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_keypoints.py models/rf-detr-keypoint-preview.pth \
         gen_reference/reference_keypoints_preview.bin
 """

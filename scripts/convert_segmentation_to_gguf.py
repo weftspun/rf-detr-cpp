@@ -5,7 +5,7 @@ file for src/segmentation.cpp. Top-level "segmentation_head.*" keys, no
 prefix stripping needed.
 
 Usage:
-    uv run --with torch --with numpy --with gguf scripts/convert_segmentation_to_gguf.py \
+    pixi run -e reference python scripts/convert_segmentation_to_gguf.py \
         models/rf-detr-seg-nano.pt models/rf-detr-seg-nano-segmentation.gguf
 """
 import sys

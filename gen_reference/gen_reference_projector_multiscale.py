@@ -11,7 +11,7 @@ can load them under the exact same names src/projector.cpp expects) plus 4
 synthetic input taps and the resulting fused P3/P5 outputs.
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_projector_multiscale.py \
         gen_reference/reference_projector_multiscale.bin
 """

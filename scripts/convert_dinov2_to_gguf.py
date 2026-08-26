@@ -8,7 +8,7 @@ tensor names land on exactly what backbone.cpp expects: "embeddings.*",
 "encoder.layer.{i}.*", "layernorm.*".
 
 Usage:
-    uv run --with torch --with numpy --with gguf scripts/convert_dinov2_to_gguf.py \
+    pixi run -e reference python scripts/convert_dinov2_to_gguf.py \
         models/rf-detr-nano.pth models/rf-detr-nano-backbone.gguf
 """
 import sys
@@ -60,7 +60,7 @@ VARIANTS = {
     ),
     # RFDETRSegSmallConfig: same encoder family as seg-nano, but
     # num_windows=2 (checkpoint-verified via RFDETRSegSmallConfig's own
-    # fields, uv run --with rfdetr), resolution=384 (gw=gh=32).
+    # fields, read from the rfdetr checkpoint), resolution=384 (gw=gh=32).
     "seg-small": dict(
         hidden=384, n_layer=12, n_head=6, patch_size=12, n_register=0,
         num_windows=2, ln_eps=1e-6,
@@ -75,7 +75,7 @@ VARIANTS = {
     ),
     # RFDETRSegPreviewConfig: same backbone/window pattern as seg-small,
     # resolution=432 (gw=gh=36) -- same resolution as seg-medium but
-    # dec_layers=4 (not 5), checkpoint-verified via uv run --with rfdetr.
+    # dec_layers=4 (not 5), checkpoint-verified by reading the rfdetr checkpoint.
     "seg-preview": dict(
         hidden=384, n_layer=12, n_head=6, patch_size=12, n_register=0,
         num_windows=2, ln_eps=1e-6,

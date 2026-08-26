@@ -6,7 +6,7 @@ same synthetic-weights/inputs approach as gen_reference_deform_attn.py
 stress-test the per-level value slicing and the joint level*point softmax.
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_deform_attn_multilevel.py \
         gen_reference/reference_deform_attn_multilevel.bin
 """

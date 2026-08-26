@@ -4,7 +4,7 @@ REAL upstream Backbone module (encoder + projector), for diffing against
 src/projector.cpp fed with src/backbone.cpp's own taps.
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_projector.py models/rf-detr-nano.pth \
         gen_reference/reference_projector_nano.bin
 """
