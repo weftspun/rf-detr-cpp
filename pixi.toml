@@ -55,3 +55,41 @@ test-device-gate = "python scripts/gate_onnx_device.py --self-test"
 
 [environments]
 gate = { features = ["gate"], no-default-feature = true }
+coreml = { features = ["coreml"], no-default-feature = true }
+
+# THE COREML FEATURE, SEPARATE FROM `gate` BECAUSE IT PINS TORCH AND `gate` MUST NOT.
+#
+# WHY IT EXISTS. `gate_onnx_device.py` measures onnxruntime's `CoreMLExecutionProvider` and
+# warns, in its own output, that "CoreML partitions a graph and puts unsupported nodes back
+# on the CPU, so a fast row is not proof the accelerator took the whole model". That cuts
+# both ways: the SLOW row is not proof either, and `rfd1122-plan.usda` carries
+# `neuralEngineUsefulForBackbone = 0` from the slow row. A native conversion can be asked
+# WHERE each operation ran, with `MLComputePlan`. RFD 1142 is the measurement.
+#
+# THE TORCH PIN IS THE WHOLE REASON FOR A SECOND FEATURE. coremltools 9.0 prints "Torch
+# version 2.11.0 has not been tested with coremltools ... Torch 2.7.0 is the most recent
+# version that has been tested", and under 2.11 the conversion dies inside its own torch
+# frontend:
+#
+#     ops.py:3066 _int -> _cast -> mb.const(val=dtype(x.val))
+#     TypeError: only 0-dimensional arrays can be converted to Python scalars
+#
+# That is a converter fault on an untested pairing, not a statement about the model, and the
+# two are worth telling apart before anything is recorded about the device half. Pinning
+# torch inside `gate` would move the ONNX gate's own torch for a reason the ONNX gate does
+# not have, so this is a second environment rather than a widened first one -- the same
+# lesson `anny-render-corpus` records for its restyle and omnigen2 features.
+[feature.coreml.dependencies]
+python = "3.11.*"
+
+[feature.coreml.pypi-dependencies]
+numpy = ">=1.26"
+usd-core = "==26.8"
+onnx = "*"
+onnxruntime = "*"
+torch = { version = ">=2.7,<2.8", index = "https://download.pytorch.org/whl/cpu" }
+torchvision = { version = "*", index = "https://download.pytorch.org/whl/cpu" }
+rfdetr = "*"
+pyarrow = ">=15"
+pillow = ">=10"
+coremltools = ">=8.0"
