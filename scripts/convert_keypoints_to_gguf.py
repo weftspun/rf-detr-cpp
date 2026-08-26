@@ -10,7 +10,7 @@ Ignores the dead legacy `keypoint_head.keypoint_proj.*` weight set
 (confirmed unused upstream, see keypoints.md).
 
 Usage:
-    uv run --with torch --with numpy --with gguf scripts/convert_keypoints_to_gguf.py \
+    pixi run -e reference python scripts/convert_keypoints_to_gguf.py \
         models/rf-detr-keypoint-preview.pth models/rf-detr-keypoint-preview-keypoints.gguf
 """
 import sys

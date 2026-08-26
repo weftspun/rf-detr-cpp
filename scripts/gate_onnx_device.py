@@ -36,7 +36,7 @@ THREE CHECKS, and each fails loudly rather than skipping:
 3. OPERATOR. Every operator is checked against DEVICE_OPS below. An operator outside
    that set is a FAIL naming the operator, because that is what the compiler will do.
 
-Run:  uv run --with torch --with numpy --with onnx --with onnxruntime --with rfdetr \
+Run:  pixi run -e gate \
           python scripts/gate_onnx_device.py [--self-test]
 """
 from __future__ import annotations

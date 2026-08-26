@@ -59,13 +59,13 @@ extending to other model-size variants — see `docs/decisions/0001-open-work.md
    validated for inference
 
 Each milestone is validated against a PyTorch reference
-(`gen_reference/*.py` via `uv run` CPU torch → `tests/test_*.cpp` max-abs-diff
+(`gen_reference/*.py` via `pixi run -e reference` CPU torch → `tests/test_*.cpp` max-abs-diff
 gate), following the sibling ports' pattern:
 
 ```sh
 cmake -B build -G Ninja && cmake --build build --target test_backbone
-uv run --with torch --with numpy --with gguf scripts/convert_dinov2_to_gguf.py models/rf-detr-nano.pth models/rf-detr-nano-backbone.gguf
-uv run --with torch --with numpy --with rfdetr gen_reference/gen_reference_backbone.py models/rf-detr-nano.pth gen_reference/reference_backbone_nano.bin
+pixi run -e reference python scripts/convert_dinov2_to_gguf.py models/rf-detr-nano.pth models/rf-detr-nano-backbone.gguf
+pixi run -e reference python gen_reference/gen_reference_backbone.py models/rf-detr-nano.pth gen_reference/reference_backbone_nano.bin
 ./build/test_backbone.exe
 ```
 

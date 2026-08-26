@@ -8,7 +8,7 @@ what projector_p4() expects for that name ("projector", the default, or
 docs/decisions/keypoints.md).
 
 Usage:
-    uv run --with torch --with numpy --with gguf scripts/convert_projector_to_gguf.py \
+    pixi run -e reference python scripts/convert_projector_to_gguf.py \
         models/rf-detr-nano.pth models/rf-detr-nano-projector.gguf [projector|cross_attn_projector]
 """
 import sys

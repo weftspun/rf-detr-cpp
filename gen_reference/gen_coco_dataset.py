@@ -15,7 +15,7 @@ Skips any image with zero non-crowd annotations after filtering (nothing
 for the loss to match against).
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr --with pillow --with albumentations \
+    pixi run -e reference python \
         gen_reference/gen_coco_dataset.py \
         data/val2017_sample data/instances_val2017.json 384 \
         gen_reference/coco_sample_384

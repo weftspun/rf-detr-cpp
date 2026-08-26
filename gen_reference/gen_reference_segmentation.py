@@ -6,7 +6,7 @@ spy-hook technique as gen_reference_decoder.py, since ggml_top_k's output
 order doesn't match torch.topk's.
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_segmentation.py models/rf-detr-seg-nano.pt \
         gen_reference/reference_segmentation_nano.bin
 

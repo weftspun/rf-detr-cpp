@@ -5,7 +5,7 @@ src/backbone.cpp. Binary format matches tests/test_common.h's read_ref:
 repeated {i32 ndim, i64 dims[ndim], f32 data (row-major, numpy order)}.
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_backbone.py models/rf-detr-nano.pth \
         gen_reference/reference_backbone_nano.bin
 """

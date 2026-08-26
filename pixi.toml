@@ -52,10 +52,54 @@ device-gate-nw1 = "python scripts/gate_onnx_device.py --num-windows 1"
 # exclusion before drawing anything a human looks at.
 keypoints-on-corpus = "python scripts/run_keypoints_on_corpus.py"
 test-device-gate = "python scripts/gate_onnx_device.py --self-test"
+# The `uv` row in CLAUDE.md had no automation anywhere; this is it.
+no-uv = "python scripts/check_no_uv.py"
+test-no-uv = "python scripts/check_no_uv.py --self-test"
+
+# THE REFERENCE FEATURE, FOR `gen_reference/` AND `scripts/convert_*_to_gguf.py`.
+#
+# These produced the .bin oracles the C++ tests diff against, and the GGUF weights the
+# port loads. Every one of them documented itself as `uv run --with torch --with numpy
+# --with rfdetr ...`, which names dependencies in a shell line: no lock, no versions, and
+# a different resolution on every desk and every day. That is precisely what the `uv` row
+# in CLAUDE.md blocklists, and this repository's own manifest header already says so --
+# the environment was declared while the instructions telling people how to run these
+# scripts still pointed at `uv`.
+#
+# SEPARATE FROM `gate` RATHER THAN FOLDED INTO IT. `gate` answers one question on every
+# change and should stay small; albumentations and its transitive opencv are not something
+# the operator gate should install to parse an operator set. The split follows the same
+# rule the `coreml` feature records: a feature per job.
+#
+# `gguf` and `albumentations` were never declared anywhere before this. They were only
+# ever `--with` flags, so a desk running `pixi install` got an environment that could not
+# run half of these scripts, and found out at ModuleNotFoundError.
+[feature.reference.dependencies]
+python = "3.11.*"
+
+[feature.reference.pypi-dependencies]
+numpy = ">=1.26"
+torch = { version = ">=2.6", index = "https://download.pytorch.org/whl/cpu" }
+torchvision = { version = "*", index = "https://download.pytorch.org/whl/cpu" }
+rfdetr = "*"
+gguf = "*"
+pillow = ">=10"
+albumentations = "*"
+
+[feature.reference.tasks]
+# The oracles. Each writes a .bin that a tests/test_*.cpp reads back and diffs.
+reference-backbone = "python gen_reference/gen_reference_backbone.py"
+reference-decoder = "python gen_reference/gen_reference_decoder.py"
+reference-keypoints = "python gen_reference/gen_reference_keypoints.py"
+# The weights the port loads.
+convert-dinov2 = "python scripts/convert_dinov2_to_gguf.py"
+convert-decoder = "python scripts/convert_decoder_to_gguf.py"
+convert-keypoints = "python scripts/convert_keypoints_to_gguf.py"
 
 [environments]
 gate = { features = ["gate"], no-default-feature = true }
 coreml = { features = ["coreml"], no-default-feature = true }
+reference = { features = ["reference"], no-default-feature = true }
 
 # THE COREML FEATURE, SEPARATE FROM `gate` BECAUSE IT PINS TORCH AND `gate` MUST NOT.
 #

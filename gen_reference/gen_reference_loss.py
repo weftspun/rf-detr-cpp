@@ -9,7 +9,7 @@ chosen simpler formula -- see docs/decisions/0004-loss.md for why the
 IA-BCE default wasn't reproduced.
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_loss.py gen_reference/reference_loss.bin
 """
 import os

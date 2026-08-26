@@ -10,7 +10,7 @@ an override input rather than trusting ggml_top_k's order for this
 milestone's numeric validation.
 
 Usage:
-    uv run --with torch --with numpy --with rfdetr \
+    pixi run -e reference python \
         gen_reference/gen_reference_decoder.py models/rf-detr-nano.pth \
         gen_reference/reference_decoder_nano.bin
 """
