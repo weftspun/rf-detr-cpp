@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Quantise a translated HAR and compile it to a HEF. Linux x86-64, inside the DFC image.
+"""Quantise a translated HAR and compile it to a HEF, inside the DFC image.
 
-Normalization is compiled in rather than baked into the calibration set, so the input
-layer takes uint8 -- `rfdetr`'s own ImageNet constants, scaled to 0-255.
+Normalization is compiled in, so the input layer takes uint8.
 """
 from __future__ import annotations
 
@@ -23,7 +22,6 @@ def layers(runner):
 
 
 def input_layer(L):
-    """The HN's own input layer name. Guessing it produces a parser error at optimize time."""
     names = [k for k, v in L.items() if v.get("type") == "input_layer"]
     if len(names) != 1:
         sys.exit("FAIL  expected exactly one input layer, found %s" % names)
@@ -34,7 +32,6 @@ def input_layer(L):
 
 
 def normalization_script(L, name):
-    """A directive name the transformer's own normalization1..N layers have not taken."""
     import re
     used = [int(m.group(1)) for k in L for m in [re.search("normalization([0-9]+)", k)] if m]
     m = ", ".join("%.3f" % (v * 255) for v in MEAN)
@@ -44,9 +41,23 @@ def normalization_script(L, name):
 
 
 def calibration_script(batch):
-    """Statistics collection at batch 8 exceeded a 30 GiB container; batch 1 is the same
-    frames at a lower peak."""
+    """Batch 8 exceeded a 30 GiB container; batch 1 is the same frames, lower peak."""
     return "model_optimization_config(calibration, batch_size=%d)\n" % batch
+
+
+def finetune_script(level, batch, epochs):
+    """Forced: under 1024 frames the flow drops to 1 and skips fine-tuning."""
+    out = ""
+    if level:
+        out += "model_optimization_flavor(optimization_level=%d)\n" % level
+    args = ["finetune", "policy=enabled"]
+    if batch:
+        args.append("batch_size=%d" % batch)
+    if epochs:
+        args.append("epochs=%d" % epochs)
+    if batch or epochs:
+        out += "post_quantization_optimization(%s)\n" % ", ".join(args)
+    return out
 
 
 def main():
@@ -56,6 +67,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--arch", default="hailo10h")
     ap.add_argument("--calib-batch", type=int, default=1)
+    ap.add_argument("--opt-level", type=int, default=0)
+    ap.add_argument("--finetune-batch", type=int, default=0)
+    ap.add_argument("--epochs", type=int, default=0)
     a = ap.parse_args()
 
     import numpy as np
@@ -70,7 +84,9 @@ def main():
 
     runner = ClientRunner(har=a.har, hw_arch=a.arch)
     L = layers(runner)
-    script = normalization_script(L, input_layer(L)) + calibration_script(a.calib_batch)
+    script = (normalization_script(L, input_layer(L))
+              + calibration_script(a.calib_batch)
+              + finetune_script(a.opt_level, a.finetune_batch, a.epochs))
     print("model script:\n%s" % script.rstrip())
     runner.load_model_script(script)
 
