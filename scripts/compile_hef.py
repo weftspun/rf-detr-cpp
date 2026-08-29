@@ -45,8 +45,13 @@ def calibration_script(batch):
     return "model_optimization_config(calibration, batch_size=%d)\n" % batch
 
 
+def precision_script(mode):
+    # 16 bits is affordable at 25 M parameters and leaves little damage to repair.
+    return "quantization_param({*}, precision_mode=%s)\n" % mode if mode else ""
+
+
 def finetune_script(level, batch, epochs):
-    """Forced: under 1024 frames the flow drops to 1 and skips fine-tuning."""
+    """Forced: under 1024 frames the flow drops to 1, skipping fine-tuning."""
     out = ""
     if level:
         out += "model_optimization_flavor(optimization_level=%d)\n" % level
@@ -70,6 +75,7 @@ def main():
     ap.add_argument("--opt-level", type=int, default=0)
     ap.add_argument("--finetune-batch", type=int, default=0)
     ap.add_argument("--epochs", type=int, default=0)
+    ap.add_argument("--precision", default="")
     a = ap.parse_args()
 
     import numpy as np
@@ -86,6 +92,7 @@ def main():
     L = layers(runner)
     script = (normalization_script(L, input_layer(L))
               + calibration_script(a.calib_batch)
+              + precision_script(a.precision)
               + finetune_script(a.opt_level, a.finetune_batch, a.epochs))
     print("model script:\n%s" % script.rstrip())
     runner.load_model_script(script)
