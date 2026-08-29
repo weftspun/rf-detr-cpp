@@ -21,12 +21,61 @@ def layers(runner):
     return hn["layers"]
 
 
-def input_layer(L):
+#: Layer types that apply a constant elementwise. A model that normalizes inside itself
+#: arrives as one of these rather than as `normalization`, which is why matching only the
+#: latter passed MoGe while catching VoxHammer.
+CONST_ARITHMETIC = ("normalization", "ew_sub", "ew_div", "ew_mult", "ew_add", "scalar_mult")
+
+
+def fed_by(L, name):
+    return {k: v for k, v in L.items() if name in (v.get("input") or [])}
+
+
+def pre_normalized(L, name):
+    """Anything applying constants straight onto the input, whatever the translator called it."""
+    return {k: v.get("type") for k, v in fed_by(L, name).items()
+            if v.get("type") in CONST_ARITHMETIC}
+
+
+def input_layer(L, assume_unnormalized=False):
     names = [k for k, v in L.items() if v.get("type") == "input_layer"]
     if len(names) != 1:
         sys.exit("FAIL  expected exactly one input layer, found %s" % names)
-    # No check for an already-normalized graph: in-module Sub/Div never reaches the HN as one.
+    found = pre_normalized(L, names[0])
+    if found and not assume_unnormalized:
+        sys.exit("FAIL  %s already applies constants to the input (%s); folding normalization "
+                 "would apply it twice. Pass --assume-unnormalized to override."
+                 % (names[0], ", ".join("%s=%s" % kv for kv in sorted(found.items()))))
     return names[0]
+
+
+def self_test():
+    """A guard that has never refused a normalized graph has not shown it can refuse one."""
+    base = {"in1": {"type": "input_layer", "input": []},
+            "conv1": {"type": "conv", "input": ["in1"]}}
+    if input_layer(dict(base)) != "in1":
+        sys.exit("FAIL  a clean graph was refused")
+
+    planted = 0
+    for kind in CONST_ARITHMETIC:
+        L = dict(base, norm1={"type": kind, "input": ["in1"]})
+        if pre_normalized(L, "in1") != {"norm1": kind}:
+            sys.exit("FAIL  a %s on the input was not seen" % kind)
+        planted += 1
+
+    # The case that motivated this: normalization inside the module, arriving as Sub then Div.
+    L = dict(base, sub1={"type": "ew_sub", "input": ["in1"]},
+             div1={"type": "ew_div", "input": ["sub1"]})
+    if not pre_normalized(L, "in1"):
+        sys.exit("FAIL  an in-module Sub/Div on the input was not seen")
+
+    deep = dict(base, norm9={"type": "ew_sub", "input": ["conv1"]})
+    if pre_normalized(deep, "in1"):
+        sys.exit("FAIL  arithmetic downstream of a conv is not pre-normalization")
+
+    print("self-test: %d constant-applying layer types refused on the input, "
+          "in-module Sub/Div refused, downstream arithmetic allowed" % planted)
+    return 0
 
 
 def normalization_script(L, name):
@@ -65,16 +114,23 @@ def finetune_script(level, batch, epochs):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("har")
-    ap.add_argument("--calib", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("har", nargs="?")
+    ap.add_argument("--calib")
+    ap.add_argument("--out")
     ap.add_argument("--arch", default="hailo10h")
     ap.add_argument("--calib-batch", type=int, default=1)
     ap.add_argument("--opt-level", type=int, default=0)
     ap.add_argument("--finetune-batch", type=int, default=0)
     ap.add_argument("--epochs", type=int, default=0)
     ap.add_argument("--precision", default="")
+    ap.add_argument("--assume-unnormalized", action="store_true")
+    ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args()
+
+    if a.self_test:
+        return self_test()
+    if not (a.har and a.calib and a.out):
+        sys.exit("FAIL  har, --calib and --out are required unless --self-test")
 
     import numpy as np
     from hailo_sdk_client import ClientRunner
@@ -88,7 +144,7 @@ def main():
 
     runner = ClientRunner(har=a.har, hw_arch=a.arch)
     L = layers(runner)
-    script = (normalization_script(L, input_layer(L))
+    script = (normalization_script(L, input_layer(L, a.assume_unnormalized))
               + calibration_script(a.calib_batch)
               + precision_script(a.precision)
               + finetune_script(a.opt_level, a.finetune_batch, a.epochs))
