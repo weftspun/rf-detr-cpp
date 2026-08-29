@@ -38,6 +38,10 @@ rfdetr = "*"
 # failure the `uv` blocklist entry exists to prevent.
 pyarrow = ">=15"
 pillow = ">=10"
+# torch.onnx's dynamo path needs this and the TorchScript path does not. Declared because
+# `view_as_complex` blocks the TorchScript exporter, and whether dynamo clears it is a
+# question the gate should be able to ask.
+onnxscript = "*"
 
 [feature.gate.tasks]
 # Does the device half export, run, and stay inside the operator set the compiler takes?
