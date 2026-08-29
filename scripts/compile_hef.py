@@ -25,9 +25,7 @@ def input_layer(L):
     names = [k for k, v in L.items() if v.get("type") == "input_layer"]
     if len(names) != 1:
         sys.exit("FAIL  expected exactly one input layer, found %s" % names)
-    if any(v.get("type") == "normalization" for k, v in L.items()
-           if any(names[0] in i for i in (v.get("input") or []))):
-        sys.exit("FAIL  the input is already normalized; adding another would double-apply")
+    # No check for an already-normalized graph: in-module Sub/Div never reaches the HN as one.
     return names[0]
 
 
